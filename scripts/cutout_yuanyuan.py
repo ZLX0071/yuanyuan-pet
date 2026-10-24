@@ -50,8 +50,8 @@ MANIFEST = {
     "startup_duration_s": 2.5,
     "states": {
         "idle": {"frames": "sprites/idle/idle_*.png", "fps": 1, "loop": True},
-        "walk": {"frames": "sprites/idle/idle_*.png", "fps": 1, "loop": True,
-                 "movement": {"speed": 30}},  # 照片级立绘：用摇摆+位移模拟颠颠地走
+        "walk": {"frames": "sprites/walk/walk_*.png", "fps": 5, "loop": True,
+                 "movement": {"speed": 30}},  # P1-4：idle 派生的 ±4° 小跑帧 + 引擎摇摆
         "dozy": {"frames": "sprites/dozy/dozy_*.png", "fps": 1, "loop": True},
         "sleep": {"frames": "sprites/sleep/sleep_*.png", "fps": 1, "loop": True},
         "excited": {"frames": "sprites/excited/excited_*.png", "fps": 1, "loop": True},
@@ -142,7 +142,17 @@ def main() -> int:
 
     (PACK_DIR / "manifest.json").write_text(
         json.dumps(MANIFEST, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"✅ 缘缘宠物包已生成：{PACK_DIR}（5 姿势 + walk 复用 idle，9 行为）")
+
+    # P1-4 走路小跑帧：由 idle 派生 ±4° 两帧（无需新素材，配合引擎摇摆=小跑感）
+    walk_dir = PACK_DIR / "sprites" / "walk"
+    walk_dir.mkdir(parents=True, exist_ok=True)
+    idle = Image.open(PACK_DIR / "sprites" / "idle" / "idle_0.png")
+    resample = getattr(getattr(Image, "Resampling", Image), "BICUBIC")
+    for i, angle in enumerate((-4, 4)):
+        trot = idle.rotate(angle, expand=True, resample=resample)
+        trot.save(str(walk_dir / f"walk_{i}.png"))
+
+    print(f"✅ 缘缘宠物包已生成：{PACK_DIR}（6 姿势 + walk 小跑帧，{len(MANIFEST['behaviors'])} 行为）")
     return 0
 
 

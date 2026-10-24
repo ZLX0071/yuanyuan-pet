@@ -19,6 +19,7 @@ from PyQt6.QtCore import QLockFile, QProcess, Qt, QTimer
 from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+from yuanyuan.ai import memory as pet_memory
 from yuanyuan.ai.notes import (NOTE_VIEW_RE, add_note, delete_note, due_notes,
                                extract_note, mark_reminded, pending_notes)
 from yuanyuan.ai.provider import AIError, Provider, load_ai_config
@@ -31,6 +32,7 @@ from yuanyuan.content.pack_loader import PackError, load_pack
 from yuanyuan.engine.animator import StateMachine
 from yuanyuan.engine.notes_dialog import NotesDialog
 from yuanyuan.engine.bubble import Bubble, ChatInput
+from yuanyuan.engine.chat_window import ChatWindow
 from yuanyuan.engine.pet_window import PetWindow
 from yuanyuan.life.save import Save
 from yuanyuan.life.schedule import ScheduleEngine
@@ -46,6 +48,9 @@ if getattr(sys, "frozen", False):
     PROJ_ROOT = Path(sys.executable).resolve().parent  # 便携包：exe 同级目录可写
 else:
     PROJ_ROOT = Path(__file__).resolve().parents[2]
+
+APP_VERSION = "1.1.0"
+RELEASE_API = "https://api.github.com/repos/ZLX0071/yuanyuan-pet/releases/latest"
 
 INTERACTION_MENU = (("喂食", "feed"), ("摸摸头", "pet"), ("玩球", "play_ball"),
                     ("握手", "shake"), ("洗澡", "bath"))
@@ -103,6 +108,13 @@ def _make_tray(app: QApplication, actions: dict, reminders: ReminderScheduler,
     a_set = QAction("设置", menu)
     a_set.triggered.connect(lambda: actions["settings"]())
     menu.addAction(a_set)
+    menu.addSeparator()
+    a_share = QAction("把这只宠物打包分享…", menu)
+    a_share.triggered.connect(lambda: actions["share_pack"]())
+    menu.addAction(a_share)
+    a_upd = QAction("检查更新", menu)
+    a_upd.triggered.connect(lambda: actions["check_update"](True))
+    menu.addAction(a_upd)
     menu.addSeparator()
     quit_act = menu.addAction("退出")
     quit_act.triggered.connect(app.quit)
@@ -249,10 +261,13 @@ def main(argv: list[str]) -> int:
         sm.pixmaps = build_scaled(pack.scale * evolution.stage_scale())
         window.apply_size(max(pm.width() for pms in sm.pixmaps.values() for pm in pms),
                           max(pm.height() for pms in sm.pixmaps.values() for pm in pms))
+        import gc
+        gc.collect()  # P2-3：立即回收被替换的旧帧集，压平 RSS 高水位
 
     # AI 对话（T4.2/T4.3/T4.4/T4.6）：气泡 + 异步线程 + 长度护栏
     bubble = Bubble()
     chat_input = ChatInput()
+    chat_window = ChatWindow(pack.name)  # P1-2 独立聊天窗（send_chat 定义后再连接信号）
     chat_q: queue.Queue = queue.Queue()
 
     def build_system() -> str:
@@ -260,7 +275,8 @@ def main(argv: list[str]) -> int:
         return (f"{persona}\n当前状态：{evolution.stage}期，饱食 {evolution.hunger:.0f}，"
                 f"心情 {evolution.mood:.0f}，亲密度 {evolution.intimacy:.0f}，"
                 f"你们已经陪伴 {evolution.day_count()} 天，连续陪伴 {evolution.streak} 天。"
-                "用一两句话回复，像狗狗一样说话，可以偶尔提到当前状态。")
+                "用一两句话回复，像狗狗一样说话，可以偶尔提到当前状态。"
+                + pet_memory.inject_block(save))
 
     def build_messages(user_text: str) -> list[dict]:
         history = save.get("chat_history", []) or []
@@ -274,8 +290,11 @@ def main(argv: list[str]) -> int:
         print(f"[AI] tokens +{tokens}（本月 {used + tokens:,}）", flush=True)
 
     def _within_budget() -> bool:
+        cfg = ai_holder["cfg"]
+        if cfg is None:
+            return True  # 无 AI 配置时由调用方拦截，这里不影响
         used = int(save.get(f"ai_usage_{time.strftime('%Y%m')}", 0) or 0)
-        return ai_cfg is None or used < int(ai_cfg["monthly_token_budget"])
+        return used < int(cfg["monthly_token_budget"])
 
     def _ai_chat(user_text: str) -> str:
         provider, ai_cfg = ai_holder["provider"], ai_holder["cfg"]
@@ -286,31 +305,45 @@ def main(argv: list[str]) -> int:
         _bump_usage(tokens)
         history = save.get("chat_history", []) or []
         history += [{"role": "user", "content": user_text}, {"role": "assistant", "content": reply}]
-        save.set("chat_history", history[-20:])  # 滚动保留最近 10 轮
+        save.set("chat_history", history)  # 完整保留，由 maintain() 摘要收缩
+        pet_memory.maintain(save, provider)  # P1-1：溢出段摘要为长期记忆
         return reply
 
     def send_chat(text: str) -> None:
         sm.note_interaction()
+        if chat_window.isVisible():  # P1-2：窗口开着走窗口
+            chat_window.append("user", text)
         if NOTE_VIEW_RE.search(text):  # 本地快路径：看记事不打 AI
             notes = pending_notes(save)
             if not notes:
-                bubble.show_text("（现在没有待办的记事哦）", 8)
+                msg = "（现在没有待办的记事哦）"
             else:
                 lines = [f"• {n['text']}" + (f"（{n['due']} 提醒）" if n.get("due") else "")
                          for n in notes[:8]]
-                bubble.show_text("你的记事：\n" + "\n".join(lines), 20)
+                msg = "你的记事：\n" + "\n".join(lines)
+            if chat_window.isVisible():
+                chat_window.append("pet", msg)
+            else:
+                bubble.show_text(msg, 20)
             return
         if ai_holder["provider"] is None:
-            bubble.show_text("（还没有配置 AI 服务：右键 → 设置里填上就能聊啦）", 8)
+            msg = "（还没有配置 AI 服务：右键 → 设置里填上就能聊啦）"
+            if chat_window.isVisible():
+                chat_window.append("pet", msg)
+            else:
+                bubble.show_text(msg, 8)
             return
-        bubble.show_text("……", None)
+        if not chat_window.isVisible():
+            bubble.show_text("……", None)
         threading.Thread(target=_chat_worker, args=(text,), daemon=True).start()
+
+    chat_window.send_requested.connect(send_chat)
 
     def _chat_worker(text: str) -> None:
         try:
             reply = _ai_chat(text)
             try:
-                note = extract_note(provider, text)  # 启发式闸门命中才多花一次小调用
+                note = extract_note(ai_holder["provider"], text)  # 启发式闸门命中才多花一次小调用
             except AIError:
                 note = None
             if note:
@@ -380,8 +413,10 @@ def main(argv: list[str]) -> int:
         print(f"[静默] {'开启：宠物隐藏，提醒暂停' if silent['on'] else '关闭'}", flush=True)
 
     def open_chat() -> None:
-        chat_input.place_above(window.frameGeometry())
-        chat_input.focus()
+        chat_window.load_history(save.get("chat_history", []) or [])
+        chat_window.show()
+        chat_window.raise_()
+        chat_window.edit.setFocus()
 
     def toggle_focus() -> None:
         if focus.on:
@@ -512,6 +547,53 @@ def main(argv: list[str]) -> int:
         QProcess.startDetached(exe, args)
         QApplication.quit()
 
+    def share_pack() -> None:  # P2-5：把当前宠物打包成 zip 分享
+        from PyQt6.QtWidgets import QFileDialog
+        default = Path.home() / "Desktop" / f"宠物包-{pack.path.name}.zip"
+        path, _ = QFileDialog.getSaveFileName(window, "导出宠物包", str(default), "宠物包 (*.zip)")
+        if not path:
+            return
+        import zipfile
+        try:
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for f in sorted(pack.path.rglob("*")):
+                    if f.is_file():
+                        zf.write(f, f.relative_to(pack.path.parent))
+        except OSError as e:
+            bubble.show_text(f"（导出失败：{e}）", 8)
+            return
+        bubble.place_above(window.frameGeometry())
+        bubble.show_text(f"（打包好啦：{Path(path).name}，发给朋友右键导入即可！）", 10)
+        print(f"[导出] {path}", flush=True)
+
+    def check_update(force: bool = False) -> None:  # P2-4：GitHub 检查更新
+        import urllib.request
+        from yuanyuan.ai.provider import _NoRedirect, _validate_url
+        today = datetime.date.today().isoformat()
+        if not force and save.get("update_checked") == today:
+            return
+        try:
+            _validate_url(RELEASE_API)  # SSRF 校验：仅 https 公网，拒绝内网/环回
+            save.set("update_checked", today)
+            req = urllib.request.Request(RELEASE_API, headers={"User-Agent": "yuanyuan-pet"})
+            opener = urllib.request.build_opener(_NoRedirect)
+            with opener.open(req, timeout=5) as resp:
+                tag = json.loads(resp.read().decode("utf-8")).get("tag_name", "")
+        except Exception as e:
+            if force:
+                tray_holder["tray"].showMessage("检查更新", f"检查失败：{e}",
+                                                QSystemTrayIcon.MessageIcon.Warning, 5000)
+            return
+        latest = tag.lstrip("v")
+        if latest and latest != APP_VERSION:
+            msg = f"缘缘有新版本 {tag}（当前 v{APP_VERSION}），去 GitHub 下载～"
+            tray_holder["tray"].showMessage("发现新版本", msg,
+                                            QSystemTrayIcon.MessageIcon.Information, 8000)
+            print(f"[更新] {msg}", flush=True)
+        elif force:
+            tray_holder["tray"].showMessage("检查更新", f"已经是最新版 v{APP_VERSION} 啦",
+                                            QSystemTrayIcon.MessageIcon.Information, 4000)
+
     def open_notes() -> None:  # P0-2：记事管理窗
         ctx = {"get_notes": lambda: pending_notes(save),
                "on_done": lambda i: delete_note(save, i),
@@ -519,6 +601,8 @@ def main(argv: list[str]) -> int:
         NotesDialog(ctx).exec()
 
     actions["notes"] = open_notes
+    actions["share_pack"] = share_pack
+    actions["check_update"] = check_update
     actions["settings"] = open_settings
     actions["import_pack"] = import_pack_dialog
 
@@ -532,7 +616,8 @@ def main(argv: list[str]) -> int:
         tray.setToolTip(tip)
 
     refresh_tooltip()
-    print(f"[缘缘] 「{pack.name}」已上桌：拖拽 / 双击互动 / 右键菜单 / Ctrl+Alt+Y 静默", flush=True)
+    print(f"[缘缘] 「{pack.name}」v{APP_VERSION} 已上桌：拖拽 / 双击互动 / 右键菜单 / Ctrl+Alt+Y 静默", flush=True)
+    QTimer.singleShot(8000, lambda: check_update(False))  # P2-4：启动 8 秒后静默查更新
 
     # 感知层（T3）
     raw_q: queue.Queue = queue.Queue()
@@ -568,8 +653,11 @@ def main(argv: list[str]) -> int:
                 reply = chat_q.get_nowait()
                 print(f"[AI] 缘缘：{reply[:60]}", flush=True)
                 last_reply["text"] = reply
-                bubble.place_above(window.frameGeometry())
-                bubble.show_text(reply, 15)
+                if chat_window.isVisible():
+                    chat_window.append("pet", reply)
+                else:
+                    bubble.place_above(window.frameGeometry())
+                    bubble.show_text(reply, 15)
         except queue.Empty:
             pass
         hwnd, changed = poller.poll()

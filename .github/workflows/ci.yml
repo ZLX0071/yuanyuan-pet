@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 运行全部验收脚本
+        shell: pwsh
+        run: |
+          $checks = @("check_loader", "check_import", "check_save", "check_sense", "check_m45", "check_schedule", "check_p0")
+          $failed = 0
+          foreach ($c in $checks) {
+            python "scripts/$c.py"
+            if ($LASTEXITCODE -ne 0) { $failed = 1; Write-Error "$c 未通过" }
+          }
+          if ($failed -ne 0) { exit 1 }

@@ -82,7 +82,7 @@ def main() -> int:
         _frame(draw).save(str(path))
 
     manifest = {
-        "format_version": "0.1",
+        "format_version": "1.0",
         "meta": {
             "name": "示例团子",
             "author": "ZCode",

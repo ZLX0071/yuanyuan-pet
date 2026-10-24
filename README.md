@@ -1,5 +1,7 @@
 # 缘缘桌宠 (Yuanyuan Pet)
 
+[![CI](https://github.com/ZLX0071/yuanyuan-pet/actions/workflows/ci.yml/badge.svg)](https://github.com/ZLX0071/yuanyuan-pet/actions/workflows/ci.yml)
+
 一只会陪伴、会对你有反应、会记得你、懂你作息的 AI 桌面小狗——以真实小狗「缘缘」为原型的开源桌宠平台。
 
 > **定位**：最有人格的桌面陪伴 + 轻助理。陪伴是灵魂（养成/作息/记忆），助理是增值（记事/提醒/专注），创作生态是护城河（开放格式 + UGC）。全部数据本地优先，AI 纯可选。
@@ -30,7 +32,7 @@ python main.py
 | [docs/架构图.md](docs/架构图.md) | 五层架构、数据流、设计决策、质量基建 |
 | [PRD-AI桌宠-缘缘.md](PRD-AI桌宠-缘缘.md) | 产品需求文档（唯一需求依据） |
 | [docs/任务拆解与里程碑.md](docs/任务拆解与里程碑.md) | M1~M6 任务与验收标准 |
-| [docs/宠物包格式规范-v0.md](docs/宠物包格式规范-v0.md) | 宠物包格式 v1.0（引擎与创作者的合同） |
+| [docs/宠物包格式规范.md](docs/宠物包格式规范.md) | 宠物包格式 v1.0（引擎与创作者的合同） |
 | [docs/创作指南.md](docs/创作指南.md) | 不写代码做出你的桌宠（10 分钟） |
 | [创作工坊/](创作工坊/) | 分享你的宠物包：Discussions 模板 + 空白模板（官方皮肤：新春版/公主版见 pets/） |
 | [docs/缘缘宠物包设计.md](docs/缘缘宠物包设计.md) | 官方吉祥物缘缘的素材与状态映射 |

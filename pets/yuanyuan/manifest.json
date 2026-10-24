@@ -21,8 +21,8 @@
       "loop": true
     },
     "walk": {
-      "frames": "sprites/idle/idle_*.png",
-      "fps": 1,
+      "frames": "sprites/walk/walk_*.png",
+      "fps": 5,
       "loop": true,
       "movement": {
         "speed": 30

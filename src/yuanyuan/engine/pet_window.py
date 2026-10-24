@@ -65,10 +65,16 @@ class PetWindow(QWidget):
         self._physics.drop()
 
     # ---- 主循环 ----
+    def _current_geo(self):
+        """P2-1：宠物在哪块屏就用哪块屏的可用区域（拖到副屏后在那边走/落）"""
+        from PyQt6.QtGui import QGuiApplication
+        screen = QGuiApplication.screenAt(self.frameGeometry().center()) or self._screen
+        return screen.availableGeometry()
+
     def _tick(self) -> None:
         # 物理下落
         if self._physics.mode == "falling":
-            geo = self._screen.availableGeometry()
+            geo = self._current_geo()
             target_bottom = geo.bottom() + 1
             # 把窗口坐标系的 floor 折算给 physics：physics 直接操作窗口 bottom 全局值
             bottom_global = self.y() + self.height()
@@ -80,7 +86,7 @@ class PetWindow(QWidget):
             # 行走：当前状态带 movement.speed 时水平位移
             state = self.pack.states[self.sm.current]
             if state.speed:
-                geo = self._screen.availableGeometry()
+                geo = self._current_geo()
                 x = self.x() + int(self._walk_dir * state.speed * 0.033)
                 if x < geo.left() or x + self.width() > geo.right() + 1:
                     self._walk_dir *= -1
@@ -159,6 +165,12 @@ class PetWindow(QWidget):
         else:
             import_act.setEnabled(False)
         menu.addAction(import_act)
+        share_act = QAction("把这只宠物打包分享…", menu)
+        if "share_pack" in self.actions:
+            share_act.triggered.connect(lambda _=False: self.actions["share_pack"]())
+        else:
+            share_act.setEnabled(False)
+        menu.addAction(share_act)
         menu.addSeparator()
         focus_label = "结束专注" if (self.focus is not None and self.focus.on) else "开始专注 (25 分钟)"
         act = QAction(focus_label, menu)

@@ -1,13 +1,16 @@
-"""只读 ICS 日历接入（M4.5-F-C）：解析 data/*.ics 的 VEVENT，开始前 15 分钟提醒一次。
+"""只读 ICS 日历接入（M4.5-F-C + P2-2）：data/*.ics，开始前 15 分钟提醒一次。
 
-支持浮动本地时间与 Z(UTC)；全天事件（VALUE=DATE）不提醒；RRULE 重复事件只按首个
-occurrence（局限记录在功能池）。文件每 5 分钟重扫一次。
+支持浮动本地时间与 Z(UTC)；全天事件不提醒；RRULE 支持 FREQ=DAILY/WEEKLY
+（可含 INTERVAL 与 BYDAY，BYDAY 仅在 WEEKLY 下生效），每次 occurrence 只报一次。
+文件每 5 分钟重扫一次。
 """
 
 from __future__ import annotations
 
 import datetime
 from pathlib import Path
+
+_WEEKDAYS = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
 
 
 def parse_ics(text: str) -> list[dict]:
@@ -37,7 +40,41 @@ def parse_ics(text: str) -> list[dict]:
                 cur["summary"] = val
             elif key == "DTSTART":
                 cur["dtstart"] = val
+            elif key == "RRULE":
+                cur["rrule"] = val
     return events
+
+
+def _expand_rrule(rrule: str, start: datetime.datetime,
+                  now: datetime.datetime, horizon_days: int = 7) -> list[datetime.datetime]:
+    """展开未来 horizon_days 天内的重复事件（DAILY/WEEKLY，支持 INTERVAL/BYDAY）。"""
+    parts = {}
+    for chunk in rrule.split(";"):
+        if "=" in chunk:
+            k, v = chunk.split("=", 1)
+            parts[k.strip().upper()] = v.strip().upper()
+    freq = parts.get("FREQ", "")
+    interval = max(1, int(parts.get("INTERVAL", "1") or 1))
+    out: list[datetime.datetime] = []
+    horizon = now + datetime.timedelta(days=horizon_days)
+    if freq == "DAILY":
+        occ = start
+        while occ < horizon:
+            if occ >= now:
+                out.append(occ)
+            occ += datetime.timedelta(days=interval)
+    elif freq == "WEEKLY":
+        byday = [d for d in parts.get("BYDAY", "").split(",") if d in _WEEKDAYS]
+        weekdays = [_WEEKDAYS[d] for d in byday] or [start.weekday()]
+        occ = start
+        weeks = 0
+        while occ < horizon:
+            if weeks % interval == 0 and occ >= now and occ.weekday() in weekdays:
+                out.append(occ)
+            occ += datetime.timedelta(days=1)
+            if occ.weekday() == 0:
+                weeks += 1
+    return out
 
 
 def _parse_dt(value: str) -> datetime.datetime | None:
@@ -75,12 +112,20 @@ class CalendarWatch:
                     pass
         out: list[tuple[str, datetime.datetime]] = []
         for ev in self._events:
-            uid = str(ev.get("uid") or f"{ev.get('summary', '')}|{ev.get('dtstart', '')}")
+            summary = ev.get("summary") or "日程"
+            base_uid = str(ev.get("uid") or f"{summary}|{ev.get('dtstart', '')}")
             start = _parse_dt(str(ev.get("dtstart", "")))
-            if start is None or uid in self._seen:
+            if start is None:
                 continue
-            delta = (start - now).total_seconds()
-            if 0 <= delta <= self.lead_s:
-                self._seen.add(uid)
-                out.append((ev.get("summary") or "日程", start))
+            # P2-2：重复事件展开未来 occurrence，每个只报一次
+            occurrences = _expand_rrule(str(ev.get("rrule", "")), start, now) \
+                if ev.get("rrule") else [start]
+            for occ in occurrences:
+                uid = f"{base_uid}|{occ.date().isoformat()}"
+                if uid in self._seen:
+                    continue
+                delta = (occ - now).total_seconds()
+                if 0 <= delta <= self.lead_s:
+                    self._seen.add(uid)
+                    out.append((summary, occ))
         return out
