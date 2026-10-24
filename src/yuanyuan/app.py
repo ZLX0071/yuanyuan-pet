@@ -4,22 +4,25 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
 import queue
 import random
 import re
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
 import psutil
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QLockFile, Qt, QTimer
 from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from yuanyuan.ai.notes import (NOTE_VIEW_RE, add_note, due_notes, extract_note,
                                mark_reminded, pending_notes)
 from yuanyuan.ai.provider import AIError, Provider, load_ai_config
+from yuanyuan.autostart import get_autostart, set_autostart
 from yuanyuan.content.models import PetPack
 from yuanyuan.content.pack_loader import PackError, load_pack
 from yuanyuan.engine.animator import StateMachine
@@ -32,8 +35,13 @@ from yuanyuan.sense.events import SenseAggregator
 from yuanyuan.sense.focus import FocusTimer
 from yuanyuan.sense.hooks import ForegroundPoller, start_hooks
 from yuanyuan.sense.reminders import ReminderScheduler
+from yuanyuan.settings_dialog import SettingsDialog
 
-PROJ_ROOT = Path(__file__).resolve().parents[2]
+if getattr(sys, "frozen", False):
+    PROJ_ROOT = Path(sys.executable).resolve().parent  # 便携包：exe 同级目录可写
+else:
+    PROJ_ROOT = Path(__file__).resolve().parents[2]
+
 INTERACTION_MENU = (("喂食", "feed"), ("摸摸头", "pet"), ("玩球", "play_ball"),
                     ("握手", "shake"), ("洗澡", "bath"))
 
@@ -81,6 +89,10 @@ def _make_tray(app: QApplication, actions: dict, reminders: ReminderScheduler
         ra.toggled.connect(lambda on, k=kind: reminders.set_enabled(k, on))
         menu_rem.addAction(ra)
     menu.addSeparator()
+    a_set = QAction("设置", menu)
+    a_set.triggered.connect(lambda: actions["settings"]())
+    menu.addAction(a_set)
+    menu.addSeparator()
     quit_act = menu.addAction("退出")
     quit_act.triggered.connect(app.quit)
     tray.setContextMenu(menu)
@@ -89,9 +101,28 @@ def _make_tray(app: QApplication, actions: dict, reminders: ReminderScheduler
 
 
 def main(argv: list[str]) -> int:
+    # 冻结版（--windowed）stdout 编码是 ANSI，中文打印会崩：强制 UTF-8 + 容错替换
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is not None:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+    # 便携版首次运行：把内置宠物包释放到可写目录（必须在参数解析前，默认包路径依赖它）
+    if getattr(sys, "frozen", False):
+        bundled = Path(getattr(sys, "_MEIPASS", "")) / "pets"
+        target = PROJ_ROOT / "pets"
+        if bundled.is_dir() and not target.is_dir():
+            import shutil
+            shutil.copytree(bundled, target)
+            print(f"[便携版] 宠物包已释放到 {target}")
+
     parser = argparse.ArgumentParser(description="缘缘桌宠")
     default_pack = PROJ_ROOT / "pets"
     packs = sorted(d for d in default_pack.iterdir() if d.is_dir()) if default_pack.is_dir() else []
+    if len(packs) > 1:  # 缘缘包优先作为默认（否则 demo-blob 会排在前）
+        packs.sort(key=lambda p: (p.name != "yuanyuan", p.name))
     parser.add_argument("--pack", type=Path, default=packs[0] if packs else None,
                         help="宠物包目录（默认取 pets/ 下第一个）")
     parser.add_argument("--smoke", type=float, default=0.0,
@@ -101,6 +132,40 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--test-chat", type=str, default=None,
                         help="启动 5 秒后自动发送一句话（验收对话链路用）")
     args = parser.parse_args(argv)
+
+    # ---- 稳定性基建（T5.2）：文件日志 / 全局异常钩子 / 单实例锁 ----
+    (PROJ_ROOT / "data" / "logs").mkdir(parents=True, exist_ok=True)
+    log_path = PROJ_ROOT / "data" / "logs" / f"app-{datetime.date.today():%Y%m%d}.log"
+
+    class _Tee:
+        def __init__(self, *streams):
+            self._streams = streams
+
+        def write(self, s):
+            for st in self._streams:
+                try:
+                    st.write(s)
+                except Exception:
+                    pass
+
+        def flush(self):
+            for st in self._streams:
+                try:
+                    st.flush()
+                except Exception:
+                    pass
+
+    log_file = open(log_path, "a", encoding="utf-8", buffering=1)
+    sys.stdout = _Tee(sys.stdout, log_file)
+    sys.stderr = _Tee(sys.stderr, log_file)
+    sys.excepthook = lambda tp, val, tb: log_file.write(
+        "".join(traceback.format_exception(tp, val, tb)) + "\n")
+
+    lock = QLockFile(str(PROJ_ROOT / "data" / "yuanyuan.lock"))
+    if not lock.tryLock(200):
+        print("缘缘已经在运行啦（看看系统托盘）")
+        return 0
+
     if args.pack is None:
         print("pets/ 下没有宠物包。先运行 scripts/make_demo_pack.py 生成示例包。")
         return 1
@@ -122,24 +187,27 @@ def main(argv: list[str]) -> int:
     evolution = Evolution(pack, save)
     print(f"[养成] {evolution.summary()}（第 {evolution.day_count()} 天 / 连续 {evolution.streak} 天）")
 
-    # AI 层（T4.1）：配置缺失时优雅降级
-    ai_cfg = load_ai_config(PROJ_ROOT / "data" / "config.json")
-    provider = Provider(ai_cfg) if ai_cfg else None
-    if provider:
-        print(f"[AI] 已接入 {provider.model}（月度额度 {int(ai_cfg['monthly_token_budget']):,} tokens）")
+    # AI 层（T4.1）：配置缺失时优雅降级；holder 支持设置界面热替换
+    ai_holder: dict = {"cfg": load_ai_config(PROJ_ROOT / "data" / "config.json"), "provider": None}
+    if ai_holder["cfg"]:
+        ai_holder["provider"] = Provider(ai_holder["cfg"])
+        print(f"[AI] 已接入 {ai_holder['provider'].model}（月度额度 {int(ai_holder['cfg']['monthly_token_budget']):,} tokens）")
     else:
         print("[AI] 未配置（data/config.json），对话功能停用，其余一切正常")
 
-    # 素材：原始帧保留一份，体型随成长阶段缩放（M2.5-N4）
-    raw_pixmaps = {name: [QPixmap(str(p)) for p in st.frame_paths]
-                   for name, st in pack.states.items()}
-
+    # 素材（T5.1 内存优化）：不再常驻原始帧副本，重建时直接从磁盘读
     def build_scaled(multiplier: float) -> dict:
-        return {name: [pm.scaled(round(pm.width() * multiplier), round(pm.height() * multiplier),
-                                 Qt.AspectRatioMode.KeepAspectRatio,
-                                 Qt.TransformationMode.SmoothTransformation)
-                       for pm in pms]
-                for name, pms in raw_pixmaps.items()}
+        result = {}
+        for name, st in pack.states.items():
+            frames = []
+            for p in st.frame_paths:
+                pm = QPixmap(str(p))
+                frames.append(pm.scaled(round(pm.width() * multiplier),
+                                        round(pm.height() * multiplier),
+                                        Qt.AspectRatioMode.KeepAspectRatio,
+                                        Qt.TransformationMode.SmoothTransformation))
+            result[name] = frames
+        return result
 
     sm = StateMachine(pack, build_scaled(pack.scale * evolution.stage_scale()))
     _t0 = time.monotonic()
@@ -187,6 +255,7 @@ def main(argv: list[str]) -> int:
         return ai_cfg is None or used < int(ai_cfg["monthly_token_budget"])
 
     def _ai_chat(user_text: str) -> str:
+        provider, ai_cfg = ai_holder["provider"], ai_holder["cfg"]
         assert provider is not None and ai_cfg is not None
         if not _within_budget():
             return "（这个月的脑力额度用完啦，下个月再聊…）"
@@ -208,8 +277,8 @@ def main(argv: list[str]) -> int:
                          for n in notes[:8]]
                 bubble.show_text("你的记事：\n" + "\n".join(lines), 20)
             return
-        if provider is None:
-            bubble.show_text("（还没有配置 AI 服务：把 API 信息写进 data/config.json 就能聊啦）", 8)
+        if ai_holder["provider"] is None:
+            bubble.show_text("（还没有配置 AI 服务：右键 → 设置里填上就能聊啦）", 8)
             return
         bubble.show_text("……", None)
         threading.Thread(target=_chat_worker, args=(text,), daemon=True).start()
@@ -231,7 +300,7 @@ def main(argv: list[str]) -> int:
 
     def maybe_proactive(ev: str) -> None:
         """T4.5 主动搭话：特定感知事件低频触发，每日上限来自宠物包 personality.proactive"""
-        if provider is None or silent["on"] or fullscreen["on"] or focus.on:
+        if ai_holder["provider"] is None or silent["on"] or fullscreen["on"] or focus.on:
             return
         max_n = int((pack.personality or {}).get("proactive", {}).get("max_per_day", 5))
         key = f"proactive_{time.strftime('%Y%m%d')}"
@@ -245,7 +314,7 @@ def main(argv: list[str]) -> int:
             try:
                 msgs = [{"role": "system",
                          "content": build_system() + f"\n现在{context}。主动说一句话（15 字内），不要提问。"}]
-                reply, tokens = provider.chat(msgs)
+                reply, tokens = ai_holder["provider"].chat(msgs)
                 _bump_usage(tokens)
                 chat_q.put(reply)
             except AIError:
@@ -310,13 +379,61 @@ def main(argv: list[str]) -> int:
     tray, tray_refs = _make_tray(app, actions, reminders)
     tray_holder["tray"] = tray
 
+    # ---- 设置界面（T5.3）：全部配置保存即生效 ----
+    def save_ai_cfg(cfg: dict) -> None:
+        (PROJ_ROOT / "data" / "config.json").write_text(
+            json.dumps({"ai": cfg}, ensure_ascii=False, indent=2), encoding="utf-8")
+        ai_holder["cfg"] = cfg
+        try:
+            ai_holder["provider"] = Provider(cfg)
+            print(f"[AI] 配置已更新：{cfg['model']}", flush=True)
+        except AIError as e:
+            ai_holder["provider"] = None
+            print(f"⚠ AI 配置无效：{e}", flush=True)
+
+    def apply_scale(scale: float) -> None:
+        pack.scale = scale
+        manifest_path = pack.path / "manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest.setdefault("display", {})["scale"] = scale
+            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
+                                     encoding="utf-8")
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"⚠ 体型写入宠物包失败：{e}", flush=True)
+        apply_stage_scale()
+
+    if getattr(sys, "frozen", False):
+        autostart_cmd = f'"{sys.executable}"'
+    else:
+        autostart_cmd = f'"{PROJ_ROOT / ".venv" / "Scripts" / "pythonw.exe"}" "{PROJ_ROOT / "main.py"}"'
+
+    def open_settings() -> None:
+        ctx = {
+            "ai_cfg": lambda: ai_holder["cfg"],
+            "save_ai_cfg": save_ai_cfg,
+            "reminders": reminders,
+            "now": lambda: time.monotonic(),
+            "get_focus_min": lambda: int(focus.duration // 60),
+            "set_focus_min": lambda m: setattr(focus, "duration", m * 60),
+            "get_scale": lambda: pack.scale,
+            "apply_scale": apply_scale,
+            "get_autostart": get_autostart,
+            "set_autostart": lambda enabled: set_autostart(enabled, autostart_cmd),
+        }
+        dialog = SettingsDialog(ctx)
+        dialog.exec()
+        refresh_tooltip()
+
+    actions["settings"] = open_settings
+
     def refresh_tooltip() -> None:
         tip = (f"{pack.name} · {evolution.stage} · 第 {evolution.day_count()} 天 / 连续 {evolution.streak} 天\n"
                f"饱食 {evolution.hunger:.0f} · 心情 {evolution.mood:.0f} · 亲密度 {evolution.intimacy:.0f}")
         if silent.get("on"):
             tip += "\n静默中"
-        if provider:
-            tip += f"\nAI：{provider.model}"
+        if ai_holder["provider"]:
+            tip += f"\nAI：{ai_holder['provider'].model}"
         tray.setToolTip(tip)
 
     refresh_tooltip()

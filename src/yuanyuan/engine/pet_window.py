@@ -165,8 +165,11 @@ class PetWindow(QWidget):
             act.setEnabled(False)
         menu.addAction(act)
         menu.addSeparator()
-        settings = QAction("设置（M5）", menu)
-        settings.setEnabled(False)
+        settings = QAction("设置", menu)
+        if "settings" in self.actions:
+            settings.triggered.connect(lambda _=False: self.actions["settings"]())
+        else:
+            settings.setEnabled(False)
         menu.addAction(settings)
         menu.addSeparator()
         quit_act = QAction("退出", menu)
