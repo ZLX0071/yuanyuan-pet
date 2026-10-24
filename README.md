@@ -36,7 +36,15 @@ python scripts/poc_transparent_window.py   # T1.2 透明窗口 PoC
 
 ## 进度
 
+- [x] **M1 骨架完成（2026-10-24）**：缘缘已上桌！6 状态（idle/walk/dozy/sleep/excited/drag）、9 行为、开机问候、随机闲逛、重力弹跳、拖拽拎起、托盘菜单
 - [x] 产品文档 + 设计文档（2026-10-24）
-- [x] T1.1 项目脚手架（2026-10-24）
-- [x] T1.2 透明窗口 PoC 通过（2026-10-24）：整机 CPU 0.00%、内存 39MB，技术栈 PyQt6 确认
-- [ ] M1 剩余：T1.3 格式 v0 定稿 → T1.4 加载器 → T1.5 状态机 → T1.6 物理 → T1.7 托盘 → T1.8 缘缘包（详见任务拆解）
+- [x] T1.1~T1.8 全部完成（详见任务拆解，含性能 PoC：整机 CPU 0.00%、内存 39MB）
+- [ ] M2 养成：数值系统 → 时间演化 → 喂食互动 → 成长阶段
+
+## 运行
+
+```bash
+python main.py                      # 默认加载 pets/ 下第一个包
+python main.py --pack pets/yuanyuan # 指定缘缘
+python main.py --smoke 15           # 冒烟测试：15 秒后自动退出并截图
+```

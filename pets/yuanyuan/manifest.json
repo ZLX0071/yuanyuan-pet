@@ -1,0 +1,145 @@
+{
+  "format_version": "0.1",
+  "meta": {
+    "name": "缘缘",
+    "author": "you & ZCode",
+    "version": "0.1.0",
+    "description": "以家里真实小狗缘缘（奶白色卷毛小型犬）为原型的桌宠",
+    "license": "私有素材：用户自有照片及其生成图，仅限本人使用"
+  },
+  "display": {
+    "scale": 1.0,
+    "anchor": "bottom_center"
+  },
+  "default_state": "idle",
+  "startup_state": "excited",
+  "startup_duration_s": 2.5,
+  "states": {
+    "idle": {
+      "frames": "sprites/idle/idle_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "walk": {
+      "frames": "sprites/idle/idle_*.png",
+      "fps": 1,
+      "loop": true,
+      "movement": {
+        "speed": 30
+      }
+    },
+    "dozy": {
+      "frames": "sprites/dozy/dozy_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "sleep": {
+      "frames": "sprites/sleep/sleep_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "excited": {
+      "frames": "sprites/excited/excited_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "drag": {
+      "frames": "sprites/drag/drag_*.png",
+      "fps": 1,
+      "loop": true
+    }
+  },
+  "behaviors": [
+    {
+      "id": "wander",
+      "from": "idle",
+      "to": "walk",
+      "trigger": {
+        "type": "random",
+        "every_s": [
+          25,
+          90
+        ]
+      },
+      "duration_s": [
+        2,
+        5
+      ],
+      "interruptible": true
+    },
+    {
+      "id": "picked_up",
+      "from": "*",
+      "to": "drag",
+      "trigger": {
+        "type": "drag_start"
+      }
+    },
+    {
+      "id": "dropped",
+      "from": "drag",
+      "to": "idle",
+      "trigger": {
+        "type": "drag_end"
+      }
+    },
+    {
+      "id": "get_sleepy",
+      "from": "*",
+      "to": "dozy",
+      "trigger": {
+        "type": "idle_time",
+        "s": 120
+      }
+    },
+    {
+      "id": "fall_asleep",
+      "from": "dozy",
+      "to": "sleep",
+      "trigger": {
+        "type": "idle_time",
+        "s": 180
+      }
+    },
+    {
+      "id": "wake_from_dozy",
+      "from": "dozy",
+      "to": "idle",
+      "trigger": {
+        "type": "click"
+      }
+    },
+    {
+      "id": "wake_from_sleep",
+      "from": "sleep",
+      "to": "idle",
+      "trigger": {
+        "type": "click"
+      }
+    },
+    {
+      "id": "greet",
+      "from": "*",
+      "to": "excited",
+      "trigger": {
+        "type": "double_click"
+      },
+      "duration_s": [
+        2,
+        3
+      ]
+    },
+    {
+      "id": "react_typing",
+      "from": "idle",
+      "to": "excited",
+      "trigger": {
+        "type": "sense",
+        "event": "typing_burst"
+      }
+    }
+  ],
+  "personality": {
+    "prompt": "你是缘缘，一只奶白色的小狗桌宠。你粘人、嘴馋、爱玩球、有点怕洗澡。说话简短，爱用\"汪！\"和颜文字，开心的时候会摇屁股。"
+  }
+}

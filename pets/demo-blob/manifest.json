@@ -1,0 +1,126 @@
+{
+  "format_version": "0.1",
+  "meta": {
+    "name": "示例团子",
+    "author": "ZCode",
+    "version": "0.1.0",
+    "description": "验证宠物包管线的程序自绘示例（脚本生成，可随时重新生成）",
+    "license": "CC0（本项目自绘）"
+  },
+  "display": {
+    "scale": 1.0,
+    "anchor": "bottom_center"
+  },
+  "default_state": "idle",
+  "startup_state": "alert",
+  "startup_duration_s": 2.0,
+  "states": {
+    "idle": {
+      "frames": "sprites/idle/idle_*.png",
+      "fps": 2,
+      "loop": true
+    },
+    "walk": {
+      "frames": "sprites/walk/walk_*.png",
+      "fps": 6,
+      "loop": true,
+      "movement": {
+        "speed": 40
+      }
+    },
+    "sleep": {
+      "frames": "sprites/sleep/sleep_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "drag": {
+      "frames": "sprites/drag/drag_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "alert": {
+      "frames": "sprites/alert/alert_*.png",
+      "fps": 2,
+      "loop": true
+    }
+  },
+  "behaviors": [
+    {
+      "id": "wander",
+      "from": "idle",
+      "to": "walk",
+      "trigger": {
+        "type": "random",
+        "every_s": [
+          20,
+          90
+        ]
+      },
+      "duration_s": [
+        3,
+        8
+      ],
+      "interruptible": true
+    },
+    {
+      "id": "picked_up",
+      "from": "*",
+      "to": "drag",
+      "trigger": {
+        "type": "drag_start"
+      }
+    },
+    {
+      "id": "dropped",
+      "from": "drag",
+      "to": "idle",
+      "trigger": {
+        "type": "drag_end"
+      }
+    },
+    {
+      "id": "nap",
+      "from": "idle",
+      "to": "sleep",
+      "trigger": {
+        "type": "idle_time",
+        "s": 300
+      }
+    },
+    {
+      "id": "wake",
+      "from": [
+        "sleep",
+        "walk"
+      ],
+      "to": "idle",
+      "trigger": {
+        "type": "click"
+      }
+    },
+    {
+      "id": "greet",
+      "from": "*",
+      "to": "alert",
+      "trigger": {
+        "type": "double_click"
+      },
+      "duration_s": [
+        1.5,
+        2.5
+      ]
+    },
+    {
+      "id": "react_typing",
+      "from": "idle",
+      "to": "alert",
+      "trigger": {
+        "type": "sense",
+        "event": "typing_burst"
+      }
+    }
+  ],
+  "personality": {
+    "prompt": "你是示例团子，一只圆滚滚的测试用小团子。说话简短。"
+  }
+}
