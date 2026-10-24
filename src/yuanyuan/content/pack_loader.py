@@ -103,11 +103,15 @@ def load_pack(pack_dir: str | Path) -> PetPack:
         if unknown:
             raise PackError(f"行为 '{bid}' 的 from 引用了未定义的状态：{', '.join(unknown)}")
         duration = b.get("duration_s")
+        require = b.get("require")
+        if require is not None and not isinstance(require, dict):
+            raise PackError(f"行为 '{bid}' 的 require 应是一个 {{…}} 对象（含 stat/op/value）")
         behaviors.append(Behavior(
             id=bid, from_states=from_states, to_state=to_state,
             trigger=Trigger(type=trig["type"], params={k: v for k, v in trig.items() if k != "type"}),
             duration=tuple(map(float, duration)) if duration else None,
             interruptible=bool(b.get("interruptible", True)),
+            require=require,
         ))
 
     # ---- 顶层字段 ----
@@ -120,6 +124,10 @@ def load_pack(pack_dir: str | Path) -> PetPack:
         warnings.append(f"startup_state '{startup_state}' 未定义，忽略")
         startup_state = None
 
+    life = raw.get("life") or {}
+    if not isinstance(life, dict):
+        raise PackError("life 段应该是一个 {…} 对象")
+
     return PetPack(
         path=pack_dir, name=str(meta["name"]),
         scale=float((raw.get("display") or {}).get("scale", 1.0)),
@@ -129,5 +137,8 @@ def load_pack(pack_dir: str | Path) -> PetPack:
         startup_duration=float(raw.get("startup_duration_s", 2.5)),
         states=states, behaviors=behaviors,
         personality=raw.get("personality") or {},
+        life_decay=life.get("decay_per_hour"),
+        life_interactions=life.get("interactions"),
+        growth_stages=life.get("growth"),
         warnings=warnings,
     )

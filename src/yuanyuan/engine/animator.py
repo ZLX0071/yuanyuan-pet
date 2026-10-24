@@ -16,10 +16,11 @@ EVENT_TRIGGERS = {"click", "double_click", "drag_start", "drag_end"}
 class StateMachine(QObject):
     state_changed = pyqtSignal(str, str)  # old, new
 
-    def __init__(self, pack: PetPack, pixmaps: dict[str, list[QPixmap]]):
+    def __init__(self, pack: PetPack, pixmaps: dict[str, list[QPixmap]], stats_getter=None):
         super().__init__()
         self.pack = pack
         self.pixmaps = pixmaps
+        self.stats_getter = stats_getter  # 返回养成数值 dict；None = 养成层未接入
         self.current = pack.startup_state or pack.default_state
         self._frame_t0 = time.monotonic()
         self._last_interaction = time.monotonic()
@@ -80,14 +81,41 @@ class StateMachine(QObject):
                     if self._can_fire(b):
                         self.fire(b)
                         return
-            # sense / stat：M2/M3 前惰性（见规范 v0 实现约定）
+            elif t == "stat":
+                # 条件满足且可触发时立即触发；不满足（如被拖拽锁定）下个周期重试
+                if self._stat_met(b.trigger.params) and self._can_fire(b):
+                    self.fire(b)
+                    return
+            # sense：M3 前惰性（见规范 v0 实现约定）
 
     def _can_fire(self, b: Behavior) -> bool:
         if self._locked:
             return False
         if b.to_state == self.current:
             return False
+        if not self._stat_met(b.require):
+            return False
         return "*" in b.from_states or self.current in b.from_states
+
+    def _stat_met(self, req: dict | None) -> bool:
+        """数值条件判断（stat 触发器与 require 门槛共用）"""
+        if not req:
+            return True
+        if self.stats_getter is None:
+            return False
+        vals = self.stats_getter()
+        v = float(vals.get(req.get("stat"), 0.0))
+        t = float(req.get("value", 0.0))
+        op = req.get("op", "<")
+        return {"<": v < t, "<=": v <= t, ">": v > t, ">=": v >= t, "==": v == t}[op]
+
+    def force(self, state: str, duration: float | None = None) -> bool:
+        """交互/系统强制切换（喂食动画、进化庆祝等）"""
+        if state not in self.pack.states:
+            return False
+        self._transition(state)
+        self._behavior_until = time.monotonic() + duration if duration else None
+        return True
 
     def fire(self, b: Behavior) -> None:
         self._transition(b.to_state)

@@ -17,10 +17,11 @@ DRAG_THRESHOLD = 6  # px；超过视为拖拽而非点击
 
 
 class PetWindow(QWidget):
-    def __init__(self, pack: PetPack, sm: StateMachine):
+    def __init__(self, pack: PetPack, sm: StateMachine, actions: dict | None = None):
         super().__init__()
         self.pack = pack
         self.sm = sm
+        self.actions = actions or {}  # {"feed": fn, "pet": fn}（M2 交互）
         self._drag_offset: QPoint | None = None
         self._press_pos: QPoint | None = None
         self._moved = False
@@ -126,10 +127,18 @@ class PetWindow(QWidget):
         if e.button() == Qt.MouseButton.LeftButton:
             self.sm.on_event("double_click")
 
-    # ---- 右键菜单（T1.7；喂食/静默/设置为占位）----
+    # ---- 右键菜单（喂食/摸摸头为 M2 真功能；静默/设置仍为占位）----
     def contextMenuEvent(self, _event) -> None:
         menu = QMenu(self)
-        for label in ("喂食（M2）", "静默模式（M3）", "设置（M5）"):
+        for label, key in (("喂食", "feed"), ("摸摸头", "pet")):
+            act = QAction(label, menu)
+            if key in self.actions:
+                act.triggered.connect(lambda _=False, k=key: self.actions[k]())
+            else:
+                act.setEnabled(False)
+            menu.addAction(act)
+        menu.addSeparator()
+        for label in ("静默模式（M3）", "设置（M5）"):
             act = QAction(label, menu)
             act.setEnabled(False)
             menu.addAction(act)

@@ -47,6 +47,21 @@
       "frames": "sprites/drag/drag_*.png",
       "fps": 1,
       "loop": true
+    },
+    "hungry": {
+      "frames": "sprites/hungry/hungry_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "eat": {
+      "frames": "sprites/eat/eat_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "play": {
+      "frames": "sprites/play/play_*.png",
+      "fps": 1,
+      "loop": true
     }
   },
   "behaviors": [
@@ -66,6 +81,41 @@
         5
       ],
       "interruptible": true
+    },
+    {
+      "id": "playful",
+      "from": "idle",
+      "to": "play",
+      "trigger": {
+        "type": "random",
+        "every_s": [
+          40,
+          120
+        ]
+      },
+      "require": {
+        "stat": "mood",
+        "op": ">=",
+        "value": 75
+      },
+      "duration_s": [
+        3,
+        6
+      ]
+    },
+    {
+      "id": "hungry",
+      "from": [
+        "idle",
+        "walk"
+      ],
+      "to": "hungry",
+      "trigger": {
+        "type": "stat",
+        "stat": "hunger",
+        "op": "<",
+        "value": 30
+      }
     },
     {
       "id": "picked_up",
@@ -139,6 +189,41 @@
       }
     }
   ],
+  "life": {
+    "decay_per_hour": {
+      "hunger": 4.0,
+      "mood": 3.0
+    },
+    "interactions": {
+      "feed": {
+        "hunger": 35,
+        "mood": 12,
+        "intimacy": 1,
+        "state": "eat",
+        "duration_s": 4
+      },
+      "pet": {
+        "mood": 6,
+        "intimacy": 1,
+        "state": "excited",
+        "duration_s": 2
+      }
+    },
+    "growth": [
+      {
+        "stage": "幼年期",
+        "min_intimacy": 0
+      },
+      {
+        "stage": "成长期",
+        "min_intimacy": 40
+      },
+      {
+        "stage": "成年期",
+        "min_intimacy": 100
+      }
+    ]
+  },
   "personality": {
     "prompt": "你是缘缘，一只奶白色的小狗桌宠。你粘人、嘴馋、爱玩球、有点怕洗澡。说话简短，爱用\"汪！\"和颜文字，开心的时候会摇屁股。"
   }

@@ -21,13 +21,16 @@ PACK_DIR = PROJ_ROOT / "pets" / "yuanyuan"
 TARGET_H = 384
 MAX_W = 512
 
-# (参考图, 状态) —— 对应 docs/缘缘宠物包设计.md 的 5 个 P0 姿势
+# (参考图, 状态) —— 对应 docs/缘缘宠物包设计.md 的状态映射（M2 起含 P1 姿势）
 JOBS = [
     ("01-坐姿吐舌-idle.jpg", "idle"),
     ("06-趴下巴-睡觉.jpg", "dozy"),
     ("07-撅屁股摇尾-兴奋.jpg", "excited"),
     ("09-趴卧闭眼-深睡.jpg", "sleep"),
     ("10-双脚跳起-迎接拎起.jpg", "drag"),
+    ("12-叼零食-求投喂.jpg", "hungry"),
+    ("02-绿围兜坐姿-进食.jpg", "eat"),
+    ("08-叼球-玩耍.jpg", "play"),
 ]
 
 MANIFEST = {
@@ -51,11 +54,20 @@ MANIFEST = {
         "sleep": {"frames": "sprites/sleep/sleep_*.png", "fps": 1, "loop": True},
         "excited": {"frames": "sprites/excited/excited_*.png", "fps": 1, "loop": True},
         "drag": {"frames": "sprites/drag/drag_*.png", "fps": 1, "loop": True},
+        "hungry": {"frames": "sprites/hungry/hungry_*.png", "fps": 1, "loop": True},
+        "eat": {"frames": "sprites/eat/eat_*.png", "fps": 1, "loop": True},
+        "play": {"frames": "sprites/play/play_*.png", "fps": 1, "loop": True},
     },
     "behaviors": [
         {"id": "wander", "from": "idle", "to": "walk",
          "trigger": {"type": "random", "every_s": [25, 90]},
          "duration_s": [2, 5], "interruptible": True},
+        {"id": "playful", "from": "idle", "to": "play",
+         "trigger": {"type": "random", "every_s": [40, 120]},
+         "require": {"stat": "mood", "op": ">=", "value": 75},
+         "duration_s": [3, 6]},
+        {"id": "hungry", "from": ["idle", "walk"], "to": "hungry",
+         "trigger": {"type": "stat", "stat": "hunger", "op": "<", "value": 30}},
         {"id": "picked_up", "from": "*", "to": "drag",
          "trigger": {"type": "drag_start"}},
         {"id": "dropped", "from": "drag", "to": "idle",
@@ -73,6 +85,18 @@ MANIFEST = {
         {"id": "react_typing", "from": "idle", "to": "excited",
          "trigger": {"type": "sense", "event": "typing_burst"}},
     ],
+    "life": {
+        "decay_per_hour": {"hunger": 4.0, "mood": 3.0},
+        "interactions": {
+            "feed": {"hunger": 35, "mood": 12, "intimacy": 1, "state": "eat", "duration_s": 4},
+            "pet": {"mood": 6, "intimacy": 1, "state": "excited", "duration_s": 2}
+        },
+        "growth": [
+            {"stage": "幼年期", "min_intimacy": 0},
+            {"stage": "成长期", "min_intimacy": 40},
+            {"stage": "成年期", "min_intimacy": 100}
+        ]
+    },
     "personality": {
         "prompt": "你是缘缘，一只奶白色的小狗桌宠。你粘人、嘴馋、爱玩球、有点怕洗澡。说话简短，爱用\"汪！\"和颜文字，开心的时候会摇屁股。"
     },

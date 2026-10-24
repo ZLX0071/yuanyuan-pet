@@ -29,6 +29,7 @@ class Behavior:
     trigger: Trigger
     duration: tuple[float, float] | None = None  # 秒；到期回 default_state
     interruptible: bool = True
+    require: dict | None = None  # 数值门槛 {"stat","op","value"}，不满足则不触发（M2）
 
 
 @dataclass
@@ -43,6 +44,9 @@ class PetPack:
     states: dict[str, FrameState]
     behaviors: list[Behavior]
     personality: dict
+    life_decay: dict | None = None         # {"hunger": 4.0, "mood": 3.0} 每小时衰减
+    life_interactions: dict | None = None  # {"feed": {...}, "pet": {...}} 交互效果
+    growth_stages: list | None = None      # [{"stage": "幼年期", "min_intimacy": 0}, ...]
     warnings: list[str] = field(default_factory=list)  # 非致命问题
 
     def summary(self) -> str:

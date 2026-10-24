@@ -1,20 +1,21 @@
-"""组装层：加载宠物包 → 状态机 → 宠物窗口（含托盘与 smoke 模式）"""
+"""组装层：加载宠物包 → 养成层 → 状态机 → 宠物窗口（含托盘/交互/smoke 模式）"""
 
 from __future__ import annotations
 
 import argparse
 import sys
-import time
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QAction, QGuiApplication, QIcon, QPixmap, QPainter, QColor
+from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from yuanyuan.content.models import PetPack
 from yuanyuan.content.pack_loader import PackError, load_pack
 from yuanyuan.engine.animator import StateMachine
 from yuanyuan.engine.pet_window import PetWindow
+from yuanyuan.life.save import Save
+from yuanyuan.life.stats import Evolution
 
 PROJ_ROOT = Path(__file__).resolve().parents[2]
 
@@ -36,20 +37,24 @@ def _tray_icon_pixmap() -> QPixmap:
     return pm
 
 
-def _make_tray(app: QApplication, window: PetWindow) -> QSystemTrayIcon:
+def _make_tray(app: QApplication, actions: dict) -> QSystemTrayIcon:
     tray = QSystemTrayIcon(QIcon(_tray_icon_pixmap()), app)
-    tray.setToolTip(f"缘缘桌宠 · {window.pack.name}")
     menu = QMenu()
-    info = menu.addAction(f"{window.pack.name}（M1）")
-    info.setEnabled(False)
+    for label, key in (("喂食", "feed"), ("摸摸头", "pet")):
+        act = QAction(label, menu)
+        if key in actions:
+            act.triggered.connect(lambda _=False, k=key: actions[k]())
+        else:
+            act.setEnabled(False)
+        menu.addAction(act)
     menu.addSeparator()
-    for label in ("喂食（M2）", "静默模式（M3）", "设置（M5）"):
+    for label in ("静默模式（M3）", "设置（M5）"):
         act = menu.addAction(label)
         act.setEnabled(False)
     menu.addSeparator()
     quit_act = menu.addAction("退出")
-    tray.setContextMenu(menu)
     quit_act.triggered.connect(app.quit)
+    tray.setContextMenu(menu)
     tray.show()
     return tray
 
@@ -62,6 +67,8 @@ def main(argv: list[str]) -> int:
                         help="宠物包目录（默认取 pets/ 下第一个）")
     parser.add_argument("--smoke", type=float, default=0.0,
                         help="冒烟测试：运行 N 秒后自动退出并截图")
+    parser.add_argument("--fast-life", type=float, default=1.0,
+                        help="养成时间倍速（调试/验收用，1 = 正常速度）")
     args = parser.parse_args(argv)
     if args.pack is None:
         print("pets/ 下没有宠物包。先运行 scripts/make_demo_pack.py 生成示例包。")
@@ -80,6 +87,11 @@ def main(argv: list[str]) -> int:
     app = QApplication(argv)
     app.setQuitOnLastWindowClosed(False)
 
+    # 养成层（T2.1~T2.5）
+    save = Save(PROJ_ROOT / "data" / f"pet-{pack.name}.db")
+    evolution = Evolution(pack, save)
+    print(f"[养成] {evolution.summary()}")
+
     # display.scale：加载时一次性平滑缩放（此前该字段未生效，2026-10-24 按用户反馈修复）
     pixmaps = {
         name: [
@@ -91,13 +103,47 @@ def main(argv: list[str]) -> int:
         ]
         for name, st in pack.states.items()
     }
-    sm = StateMachine(pack, pixmaps)
+
+    sm = StateMachine(pack, pixmaps, stats_getter=lambda: evolution.as_dict())
     sm.state_changed.connect(lambda old, new: print(f"[状态] {old} → {new}", flush=True))
-    window = PetWindow(pack, sm)
+
+    tray_holder: dict = {}
+
+    def refresh_tooltip() -> None:
+        tray = tray_holder.get("tray")
+        if tray:
+            tray.setToolTip(f"{pack.name} · {evolution.stage} · 亲密度 {evolution.intimacy:.0f}")
+
+    def on_interact(iid: str) -> None:
+        result = evolution.do(iid)
+        if result and result[0]:
+            sm.force(result[0], result[1])
+        stage = evolution.check_growth()
+        if stage:
+            print(f"[成长] 🎉 亲密度够了，缘缘进入「{stage}」！", flush=True)
+            sm.force(pack.startup_state or pack.default_state, 3.0)
+        print(f"[养成] {iid}: {evolution.summary()}", flush=True)
+        refresh_tooltip()
+
+    actions = {"feed": lambda: on_interact("feed"), "pet": lambda: on_interact("pet")}
+
+    window = PetWindow(pack, sm, actions)
     window.place_on(app.primaryScreen())
     window.show()
-    _make_tray(app, window)
-    print(f"[缘缘] 「{pack.name}」已上桌：拖拽 / 双击互动 / 右键菜单 / 托盘退出", flush=True)
+    tray_holder["tray"] = _make_tray(app, actions)
+    refresh_tooltip()
+    print(f"[缘缘] 「{pack.name}」已上桌：拖拽 / 双击互动 / 右键喂食摸摸头 / 托盘退出", flush=True)
+
+    # 生命周期：每分钟演化一次并存档（T2.2）
+    def life_tick() -> None:
+        evolution.tick((1 / 60) * args.fast_life)
+        evolution.save_stats()
+        refresh_tooltip()
+
+    life_timer = QTimer()
+    life_timer.timeout.connect(life_tick)
+    life_timer.start(60_000 if args.smoke <= 0 else 1_000)  # smoke 模式下每秒演化一次便于验收
+    app.aboutToQuit.connect(save.close)
 
     if args.smoke > 0:
         def finish_smoke() -> None:
@@ -105,7 +151,8 @@ def main(argv: list[str]) -> int:
             shot_dir.mkdir(exist_ok=True)
             path = shot_dir / f"演示截图-{pack.name}.png"
             window.grab().save(str(path))
-            print(f"[smoke] {args.smoke}s 运行结束，状态轨迹见上方日志，截图 {path}")
+            print(f"[养成] 结束时 {evolution.summary()}")
+            print(f"[smoke] {args.smoke}s 运行结束，截图 {path}")
             app.quit()
         QTimer.singleShot(int(args.smoke * 1000), finish_smoke)
 
