@@ -29,6 +29,7 @@ from yuanyuan.engine.animator import StateMachine
 from yuanyuan.engine.bubble import Bubble, ChatInput
 from yuanyuan.engine.pet_window import PetWindow
 from yuanyuan.life.save import Save
+from yuanyuan.life.schedule import ScheduleEngine
 from yuanyuan.life.stats import Evolution
 from yuanyuan.sense.calendar import CalendarWatch
 from yuanyuan.sense.events import SenseAggregator
@@ -185,7 +186,9 @@ def main(argv: list[str]) -> int:
     # 养成层
     save = Save(PROJ_ROOT / "data" / f"pet-{pack.name}.db")
     evolution = Evolution(pack, save)
-    print(f"[养成] {evolution.summary()}（第 {evolution.day_count()} 天 / 连续 {evolution.streak} 天）")
+    schedule = ScheduleEngine(save, set(pack.states))  # X1 作息还原
+    print(f"[养成] {evolution.summary()}（第 {evolution.day_count()} 天 / 连续 {evolution.streak} 天）"
+          + (" · 作息还原已启用" if schedule.enabled else ""))
 
     # AI 层（T4.1）：配置缺失时优雅降级；holder 支持设置界面热替换
     ai_holder: dict = {"cfg": load_ai_config(PROJ_ROOT / "data" / "config.json"), "provider": None}
@@ -322,6 +325,12 @@ def main(argv: list[str]) -> int:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def on_head_pat() -> None:
+        """部位互动：摸头（大肥鱼拆解吸收项）"""
+        sm.force("excited", 2)
+        bubble.place_above(window.frameGeometry())
+        bubble.show_text("汪汪！", 4)
+
     def on_interact(iid: str) -> None:
         sm.note_interaction()  # 菜单交互重置闲置/睡觉计时
         result = evolution.do(iid)
@@ -369,6 +378,7 @@ def main(argv: list[str]) -> int:
     actions["toggle_silent"] = toggle_silent
     actions["chat"] = open_chat
     actions["toggle_focus"] = toggle_focus
+    actions["head_pat"] = on_head_pat
     chat_input.send_requested.connect(send_chat)
 
     window = PetWindow(pack, sm, actions=actions, silent=silent, focus=focus)
@@ -420,6 +430,9 @@ def main(argv: list[str]) -> int:
             "apply_scale": apply_scale,
             "get_autostart": get_autostart,
             "set_autostart": lambda enabled: set_autostart(enabled, autostart_cmd),
+            "get_schedule": lambda: save.get("schedule") or {},
+            "save_schedule": lambda data: (save.set("schedule", data), schedule.reload()),
+            "pack_states": sorted(pack.states),
         }
         dialog = SettingsDialog(ctx)
         dialog.exec()
@@ -517,6 +530,13 @@ def main(argv: list[str]) -> int:
             bubble.show_text(f"（{msg}！）", 10)
             sm.force(pack.startup_state or pack.default_state, 2.5)
             print(f"[记事] {msg}", flush=True)
+        for entry in schedule.tick(datetime.datetime.now()):  # X1 作息还原
+            duration = float(entry["duration_s"]) if entry.get("duration_s") else None
+            sm.force(str(entry["state"]), duration)
+            if entry.get("label"):
+                bubble.place_above(window.frameGeometry())
+                bubble.show_text(f"（{entry['label']}～）", 6)
+            print(f"[作息] {entry.get('label', '') or '作息'} → {entry['state']}", flush=True)
 
     life_timer = QTimer()
     life_timer.timeout.connect(lambda: (evolution.tick((1 / 60) * args.fast_life),

@@ -132,6 +132,9 @@ class PetWindow(QWidget):
             self._physics.drop()  # 松手 → 从当前位置掉落
         else:
             self.sm.on_event("click")
+            # 部位互动：点头部的点击视为"摸头"（大肥鱼拆解吸收项）
+            if e.position().y() < self.height() * 0.45 and "head_pat" in self.actions:
+                self.actions["head_pat"]()
 
     def mouseDoubleClickEvent(self, e) -> None:
         if e.button() == Qt.MouseButton.LeftButton:

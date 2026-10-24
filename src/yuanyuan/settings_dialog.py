@@ -6,10 +6,11 @@
 from __future__ import annotations
 
 import json
+import re
 
-from PyQt6.QtWidgets import (QCheckBox, QDialog, QDoubleSpinBox, QFormLayout,
+from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFormLayout,
                              QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                             QSpinBox, QVBoxLayout)
+                             QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout)
 
 
 class SettingsDialog(QDialog):
@@ -69,6 +70,30 @@ class SettingsDialog(QDialog):
             self.rem_widgets[kind] = (cb, sp)
         root.addWidget(gb_rem)
 
+        # ---- 作息还原（X1）----
+        gb_sched = QGroupBox("作息还原（缘缘按你的节奏自主生活）")
+        v_sched = QVBoxLayout(gb_sched)
+        sched = self.ctx["get_schedule"]()
+        self.cb_sched = QCheckBox("启用作息还原")
+        self.cb_sched.setChecked(bool(sched.get("enabled", False)))
+        v_sched.addWidget(self.cb_sched)
+        self.table_sched = QTableWidget(0, 4)
+        self.table_sched.setHorizontalHeaderLabels(["时间 HH:MM", "动作", "说明", "持续秒(空=到互动)"])
+        self.table_sched.setMaximumHeight(170)
+        self._sched_states = self.ctx["pack_states"]
+        v_sched.addWidget(self.table_sched)
+        row_btns = QHBoxLayout()
+        for text, fn in (("添加一行", self._add_sched_row), ("删除选中", self._del_sched_row),
+                         ("填入示例", self._sample_sched)):
+            b = QPushButton(text)
+            b.clicked.connect(fn)
+            row_btns.addWidget(b)
+        row_btns.addStretch(1)
+        v_sched.addLayout(row_btns)
+        for e in (sched.get("entries") or []):
+            self._add_sched_row(e)
+        root.addWidget(gb_sched)
+
         # ---- 专注 / 大小 ----
         gb_fd = QGroupBox("专注与体型")
         form_fd = QFormLayout(gb_fd)
@@ -104,6 +129,54 @@ class SettingsDialog(QDialog):
         buttons.addWidget(btn_save)
         root.addLayout(buttons)
 
+    # ---- 作息表编辑（X1）----
+    def _add_sched_row(self, entry: dict | None = None) -> None:
+        entry = entry or {}
+        row = self.table_sched.rowCount()
+        self.table_sched.insertRow(row)
+        self.table_sched.setItem(row, 0, QTableWidgetItem(str(entry.get("time", "08:00"))))
+        combo = QComboBox()
+        combo.addItems(self._sched_states)
+        state = str(entry.get("state", "idle"))
+        combo.setCurrentText(state if state in self._sched_states else "idle")
+        self.table_sched.setCellWidget(row, 1, combo)
+        self.table_sched.setItem(row, 2, QTableWidgetItem(str(entry.get("label", ""))))
+        dur = entry.get("duration_s")
+        self.table_sched.setItem(row, 3, QTableWidgetItem("" if dur in (None, "") else str(int(dur))))
+
+    def _del_sched_row(self) -> None:
+        for r in sorted({i.row() for i in self.table_sched.selectedIndexes()}, reverse=True):
+            self.table_sched.removeRow(r)
+
+    def _sample_sched(self) -> None:
+        from yuanyuan.life.schedule import DEFAULT_SCHEDULE
+        self.table_sched.setRowCount(0)
+        for e in DEFAULT_SCHEDULE["entries"]:
+            self._add_sched_row(e)
+        self.cb_sched.setChecked(True)
+
+    def _collect_sched(self) -> dict | None:
+        """收集作息表；时间格式错误返回 None。"""
+        entries = []
+        for r in range(self.table_sched.rowCount()):
+            t_item = self.table_sched.item(r, 0)
+            t = (t_item.text().strip() if t_item else "")
+            if not t:
+                continue
+            if not re.match(r"^\d{1,2}:\d{2}$", t):
+                return None
+            combo = self.table_sched.cellWidget(r, 1)
+            label_item = self.table_sched.item(r, 2)
+            dur_item = self.table_sched.item(r, 3)
+            dur_txt = (dur_item.text().strip() if dur_item else "")
+            entries.append({
+                "time": t.zfill(5),
+                "state": combo.currentText() if combo else "idle",
+                "label": label_item.text().strip() if label_item else "",
+                "duration_s": float(dur_txt) if dur_txt else None,
+            })
+        return {"enabled": self.cb_sched.isChecked(), "entries": entries}
+
     def _test_connection(self) -> None:
         base, key, model = self.ed_base.text().strip(), self.ed_key.text().strip(), self.ed_model.text().strip()
         try:
@@ -117,6 +190,13 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "连接失败", str(e))
 
     def _save(self) -> None:
+        # 作息（X1）
+        sched = self._collect_sched()
+        if sched is None:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "格式错误", "作息表的时间格式应为 HH:MM（如 07:30）")
+            return
+        self.ctx["save_schedule"](sched)
         # AI
         ai_cfg = {
             "base_url": self.ed_base.text().strip(),
