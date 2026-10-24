@@ -1,0 +1,29 @@
+{
+  "format_version": "1.0",
+  "meta": {
+    "name": "我的宠物",
+    "author": "你的名字",
+    "version": "1.0.0",
+    "description": "一句话介绍你的宠物",
+    "license": "自绘"
+  },
+  "display": { "scale": 1.0, "anchor": "bottom_center" },
+  "default_state": "idle",
+  "states": {
+    "idle": { "frames": "sprites/idle/idle_*.png", "fps": 2, "loop": true },
+    "sleep": { "frames": "sprites/sleep/sleep_*.png", "fps": 1, "loop": true }
+  },
+  "behaviors": [
+    { "id": "nap", "from": "idle", "to": "sleep",
+      "trigger": { "type": "idle_time", "s": 300 } },
+    { "id": "wake", "from": "sleep", "to": "idle",
+      "trigger": { "type": "click" } }
+  ],
+  "life": {
+    "interactions": {
+      "feed": { "hunger": 35, "mood": 12, "intimacy": 1, "state": "idle", "duration_s": 3 },
+      "pet": { "mood": 6, "intimacy": 1, "state": "idle", "duration_s": 2 }
+    }
+  },
+  "personality": { "prompt": "你是___，说话简短爱撒娇。" }
+}

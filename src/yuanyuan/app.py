@@ -140,6 +140,8 @@ def main(argv: list[str]) -> int:
                         help="养成时间倍速（调试/验收用，1 = 正常速度）")
     parser.add_argument("--test-chat", type=str, default=None,
                         help="启动 5 秒后自动发送一句话（验收对话链路用）")
+    parser.add_argument("--demo", action="store_true",
+                        help="演示编排模式：定时触发互动（配合 --smoke N 供录屏）")
     args = parser.parse_args(argv)
 
     # ---- 稳定性基建（T5.2）：文件日志 / 全局异常钩子 / 单实例锁 ----
@@ -612,6 +614,16 @@ def main(argv: list[str]) -> int:
 
     if args.test_chat:
         QTimer.singleShot(5000, lambda: send_chat(args.test_chat))
+
+    if args.demo:  # 演示编排：一条时间线讲完核心玩法（配合 --smoke ~50 录屏）
+        plan = [
+            (6.0, "feed"), (12.0, "pet"), (17.0, "play_ball"), (23.0, "shake"),
+            (29.0, "bath"),
+        ]
+        for at, iid in plan:
+            QTimer.singleShot(int(at * 1000), lambda i=iid: on_interact(i))
+        QTimer.singleShot(36000, toggle_focus)  # 专注陪伴收尾
+        print("[demo] 编排时间线已启动：喂食/摸头/玩球/握手/洗澡/专注", flush=True)
 
     if args.smoke > 0:
         def finish_smoke() -> None:

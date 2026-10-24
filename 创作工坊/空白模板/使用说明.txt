@@ -1,0 +1,8 @@
+空白模板使用说明（3 步）：
+
+1. 把整个「空白模板」文件夹复制到缘缘目录的 pets\ 下，改个名字（如 pets\my-pet\）；
+2. 在 sprites\idle\ 放一张透明 PNG 命名 idle_0.png，在 sprites\sleep\ 放一张命名 sleep_0.png
+   （建议高 384px 左右；只有 idle 一张也能跑——把 manifest.json 里的 sleep 相关行删掉）；
+3. 改 manifest.json 的 meta.name，启动缘缘 → 托盘「切换宠物」。
+
+更多玩法（行为触发器/养成/AI 人格）：见 docs\宠物包格式规范-v0.md

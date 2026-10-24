@@ -1,0 +1,322 @@
+{
+  "format_version": "0.1",
+  "meta": {
+    "name": "缘缘·公主版",
+    "author": "you & ZCode",
+    "version": "0.1.0",
+    "description": "蝴蝶结项链公主皮肤：盛装打扮的缘缘",
+    "license": "私有素材：用户自有照片及其生成图，仅限本人使用"
+  },
+  "display": {
+    "scale": 0.4,
+    "anchor": "bottom_center"
+  },
+  "default_state": "idle",
+  "startup_state": "excited",
+  "startup_duration_s": 2.5,
+  "states": {
+    "idle": {
+      "frames": "sprites/idle/idle_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "walk": {
+      "frames": "sprites/idle/idle_*.png",
+      "fps": 1,
+      "loop": true,
+      "movement": {
+        "speed": 30
+      }
+    },
+    "dozy": {
+      "frames": "sprites/dozy/dozy_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "sleep": {
+      "frames": "sprites/sleep/sleep_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "excited": {
+      "frames": "sprites/excited/excited_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "drag": {
+      "frames": "sprites/drag/drag_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "hungry": {
+      "frames": "sprites/hungry/hungry_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "eat": {
+      "frames": "sprites/eat/eat_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "play": {
+      "frames": "sprites/play/play_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "bath": {
+      "frames": "sprites/bath/bath_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "shake": {
+      "frames": "sprites/shake/shake_*.png",
+      "fps": 1,
+      "loop": true
+    }
+  },
+  "behaviors": [
+    {
+      "id": "wander",
+      "from": "idle",
+      "to": "walk",
+      "trigger": {
+        "type": "random",
+        "every_s": [
+          25,
+          90
+        ]
+      },
+      "duration_s": [
+        2,
+        5
+      ],
+      "interruptible": true
+    },
+    {
+      "id": "playful",
+      "from": "idle",
+      "to": "play",
+      "trigger": {
+        "type": "random",
+        "every_s": [
+          40,
+          120
+        ]
+      },
+      "require": {
+        "stat": "mood",
+        "op": ">=",
+        "value": 75
+      },
+      "duration_s": [
+        3,
+        6
+      ]
+    },
+    {
+      "id": "hungry",
+      "from": [
+        "idle",
+        "walk"
+      ],
+      "to": "hungry",
+      "trigger": {
+        "type": "stat",
+        "stat": "hunger",
+        "op": "<",
+        "value": 30
+      }
+    },
+    {
+      "id": "picked_up",
+      "from": "*",
+      "to": "drag",
+      "trigger": {
+        "type": "drag_start"
+      }
+    },
+    {
+      "id": "dropped",
+      "from": "drag",
+      "to": "idle",
+      "trigger": {
+        "type": "drag_end"
+      }
+    },
+    {
+      "id": "get_sleepy",
+      "from": [
+        "idle",
+        "walk",
+        "hungry"
+      ],
+      "to": "dozy",
+      "trigger": {
+        "type": "idle_time",
+        "s": 120
+      }
+    },
+    {
+      "id": "fall_asleep",
+      "from": "dozy",
+      "to": "sleep",
+      "trigger": {
+        "type": "idle_time",
+        "s": 180
+      }
+    },
+    {
+      "id": "wake_from_dozy",
+      "from": "dozy",
+      "to": "idle",
+      "trigger": {
+        "type": "click"
+      }
+    },
+    {
+      "id": "wake_from_sleep",
+      "from": "sleep",
+      "to": "idle",
+      "trigger": {
+        "type": "click"
+      }
+    },
+    {
+      "id": "greet",
+      "from": "*",
+      "to": "excited",
+      "trigger": {
+        "type": "double_click"
+      },
+      "duration_s": [
+        2,
+        3
+      ]
+    },
+    {
+      "id": "react_typing",
+      "from": "idle",
+      "to": "excited",
+      "trigger": {
+        "type": "sense",
+        "event": "typing_burst"
+      },
+      "duration_s": [
+        3,
+        5
+      ]
+    },
+    {
+      "id": "greet_return",
+      "from": [
+        "idle",
+        "walk"
+      ],
+      "to": "excited",
+      "trigger": {
+        "type": "sense",
+        "event": "user_return"
+      },
+      "duration_s": [
+        2.5,
+        3.5
+      ]
+    },
+    {
+      "id": "nudge_rest",
+      "from": [
+        "idle",
+        "walk",
+        "hungry"
+      ],
+      "to": "excited",
+      "trigger": {
+        "type": "sense",
+        "event": "work_marathon"
+      },
+      "duration_s": [
+        3,
+        4.5
+      ]
+    }
+  ],
+  "sense": {
+    "reminders": {
+      "water": {
+        "every_min": 45,
+        "message": "汪！陪我去接杯水嘛，就一口…"
+      },
+      "rest": {
+        "every_min": 60,
+        "message": "盯屏幕很久啦汪！站起来伸个懒腰，我看着你～"
+      }
+    }
+  },
+  "life": {
+    "decay_per_hour": {
+      "hunger": 4.0,
+      "mood": 3.0
+    },
+    "interactions": {
+      "feed": {
+        "hunger": 35,
+        "mood": 12,
+        "intimacy": 1,
+        "state": "eat",
+        "duration_s": 4
+      },
+      "pet": {
+        "mood": 6,
+        "intimacy": 1,
+        "state": "excited",
+        "duration_s": 2
+      },
+      "play_ball": {
+        "mood": 18,
+        "hunger": -8,
+        "intimacy": 1,
+        "state": "play",
+        "duration_s": 5
+      },
+      "shake": {
+        "mood": 4,
+        "intimacy": 1,
+        "state": "shake",
+        "duration_s": 3
+      },
+      "bath": {
+        "mood": 15,
+        "intimacy": 1,
+        "state": "bath",
+        "duration_s": 5,
+        "cooldown_min": 720
+      },
+      "focus_done": {
+        "mood": 12,
+        "intimacy": 2,
+        "state": "excited",
+        "duration_s": 3
+      }
+    },
+    "growth": [
+      {
+        "stage": "幼年期",
+        "min_intimacy": 0,
+        "scale": 0.85
+      },
+      {
+        "stage": "成长期",
+        "min_intimacy": 40,
+        "scale": 0.95
+      },
+      {
+        "stage": "成年期",
+        "min_intimacy": 100,
+        "scale": 1.05
+      }
+    ]
+  },
+  "personality": {
+    "prompt": "你是缘缘，一只奶白色的小狗桌宠。你粘人、嘴馋、爱玩球、有点怕洗澡。说话简短，爱用\"汪！\"和颜文字，开心的时候会摇屁股。"
+  }
+}
