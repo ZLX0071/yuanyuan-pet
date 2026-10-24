@@ -30,6 +30,7 @@ class Behavior:
     duration: tuple[float, float] | None = None  # 秒；到期回 default_state
     interruptible: bool = True
     require: dict | None = None  # 数值门槛 {"stat","op","value"}，不满足则不触发（M2）
+    cooldown: float = 30.0       # 自动触发（random/idle_time/stat）两次触发的最短间隔秒数
 
 
 @dataclass

@@ -11,6 +11,8 @@ from PyQt6.QtGui import QPixmap
 from ..content.models import Behavior, PetPack
 
 EVENT_TRIGGERS = {"click", "double_click", "drag_start", "drag_end"}
+AUTO_TRIGGERS = {"random", "idle_time", "stat"}
+AUTO_DWELL_S = 3.0  # 全局最短停留：任何切换后 3s 内不做自动决策（防高频抖动，成熟桌宠惯例）
 
 
 class StateMachine(QObject):
@@ -28,6 +30,7 @@ class StateMachine(QObject):
             time.monotonic() + pack.startup_duration if pack.startup_state else None
         )
         self._locked = False  # 拖拽中：只允许 drag_end
+        self._last_auto = 0.0
         self._decision_timer = QTimer(self)
         self._decision_timer.timeout.connect(self._tick)
         self._decision_timer.start(100)  # 10Hz 决策
@@ -47,8 +50,12 @@ class StateMachine(QObject):
         return frames[idx]
 
     # ---- 引擎事件入口（窗口层调用）----
-    def on_event(self, event: str) -> None:
+    def note_interaction(self) -> None:
+        """用户产生了交互（点击/拖拽/菜单喂食），重置闲置计时"""
         self._last_interaction = time.monotonic()
+
+    def on_event(self, event: str) -> None:
+        self.note_interaction()
         if event == "drag_end":
             self._locked = False
         for b in self.pack.behaviors:
@@ -63,7 +70,13 @@ class StateMachine(QObject):
             self._behavior_until = None
             self._transition(self.pack.default_state)
             return
+        if now - self._last_auto < AUTO_DWELL_S:
+            return  # 最短停留期内不做自动决策
         for b in self.pack.behaviors:
+            if b.trigger.type not in AUTO_TRIGGERS:
+                continue
+            if now - getattr(b, "_last_fired", -1e18) < b.cooldown:
+                continue  # 行为冷却中
             t = b.trigger.type
             if t == "random":
                 every = b.trigger.params.get("every_s") or [60, 180]
@@ -119,6 +132,7 @@ class StateMachine(QObject):
 
     def fire(self, b: Behavior) -> None:
         self._transition(b.to_state)
+        b._last_fired = time.monotonic()
         if b.duration:
             self._behavior_until = time.monotonic() + random.uniform(*b.duration)
 
@@ -126,8 +140,10 @@ class StateMachine(QObject):
         if new == self.current:
             return
         old, self.current = self.current, new
-        self._frame_t0 = time.monotonic()
+        now = time.monotonic()
+        self._frame_t0 = now
         self._behavior_until = None
+        self._last_auto = now  # 最短停留从这次切换起算
         if new == "drag":  # 进入拖拽态后锁住，直到 drag_end
             self._locked = True
         self.state_changed.emit(old, new)

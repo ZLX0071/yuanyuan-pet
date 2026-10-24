@@ -72,8 +72,8 @@ MANIFEST = {
          "trigger": {"type": "drag_start"}},
         {"id": "dropped", "from": "drag", "to": "idle",
          "trigger": {"type": "drag_end"}},
-        {"id": "get_sleepy", "from": "*", "to": "dozy",
-         "trigger": {"type": "idle_time", "s": 120}},
+        {"id": "get_sleepy", "from": ["idle", "walk", "hungry"], "to": "dozy",
+         "trigger": {"type": "idle_time", "s": 120}},  # 睡觉链只从清醒态出发，禁止从 sleep 抢回（防抖动）
         {"id": "fall_asleep", "from": "dozy", "to": "sleep",
          "trigger": {"type": "idle_time", "s": 180}},
         {"id": "wake_from_dozy", "from": "dozy", "to": "idle",

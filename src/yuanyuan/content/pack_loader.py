@@ -112,6 +112,7 @@ def load_pack(pack_dir: str | Path) -> PetPack:
             duration=tuple(map(float, duration)) if duration else None,
             interruptible=bool(b.get("interruptible", True)),
             require=require,
+            cooldown=float(b.get("cooldown_s", 30.0)),
         ))
 
     # ---- 顶层字段 ----

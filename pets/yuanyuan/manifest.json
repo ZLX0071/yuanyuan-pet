@@ -135,7 +135,11 @@
     },
     {
       "id": "get_sleepy",
-      "from": "*",
+      "from": [
+        "idle",
+        "walk",
+        "hungry"
+      ],
       "to": "dozy",
       "trigger": {
         "type": "idle_time",

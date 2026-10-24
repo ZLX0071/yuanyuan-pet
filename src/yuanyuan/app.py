@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
@@ -105,7 +106,10 @@ def main(argv: list[str]) -> int:
     }
 
     sm = StateMachine(pack, pixmaps, stats_getter=lambda: evolution.as_dict())
-    sm.state_changed.connect(lambda old, new: print(f"[状态] {old} → {new}", flush=True))
+    _t0 = time.monotonic()
+    sm.state_changed.connect(
+        lambda old, new: print(f"[状态] +{time.monotonic() - _t0:6.1f}s {old} → {new}", flush=True)
+    )
 
     tray_holder: dict = {}
 
@@ -115,6 +119,7 @@ def main(argv: list[str]) -> int:
             tray.setToolTip(f"{pack.name} · {evolution.stage} · 亲密度 {evolution.intimacy:.0f}")
 
     def on_interact(iid: str) -> None:
+        sm.note_interaction()  # 菜单交互也算互动：重置闲置/睡觉计时
         result = evolution.do(iid)
         if result and result[0]:
             sm.force(result[0], result[1])
