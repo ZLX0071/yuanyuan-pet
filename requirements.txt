@@ -1,0 +1,4 @@
+PyQt6>=6.7
+psutil>=5.9
+# rembg（T1.8 参考图抠图用，含 onnxruntime 体积较大 ~300MB，做缘缘包时再装）
+# rembg[cpu]
