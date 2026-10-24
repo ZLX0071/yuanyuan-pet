@@ -15,7 +15,7 @@ import traceback
 from pathlib import Path
 
 import psutil
-from PyQt6.QtCore import QLockFile, Qt, QTimer
+from PyQt6.QtCore import QLockFile, QProcess, Qt, QTimer
 from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
@@ -24,6 +24,8 @@ from yuanyuan.ai.notes import (NOTE_VIEW_RE, add_note, due_notes, extract_note,
 from yuanyuan.ai.provider import AIError, Provider, load_ai_config
 from yuanyuan.autostart import get_autostart, set_autostart
 from yuanyuan.content.models import PetPack
+from yuanyuan.content.pack_import import ImportError_ as PackImportError
+from yuanyuan.content.pack_import import import_pack_zip
 from yuanyuan.content.pack_loader import PackError, load_pack
 from yuanyuan.engine.animator import StateMachine
 from yuanyuan.engine.bubble import Bubble, ChatInput
@@ -64,8 +66,8 @@ def _tray_icon_pixmap() -> QPixmap:
     return pm
 
 
-def _make_tray(app: QApplication, actions: dict, reminders: ReminderScheduler
-               ) -> tuple[QSystemTrayIcon, dict]:
+def _make_tray(app: QApplication, actions: dict, reminders: ReminderScheduler,
+               rebuild_switch=None) -> tuple[QSystemTrayIcon, dict]:
     tray = QSystemTrayIcon(QIcon(_tray_icon_pixmap()), app)
     menu = QMenu()
     for label, key in INTERACTION_MENU:
@@ -90,6 +92,12 @@ def _make_tray(app: QApplication, actions: dict, reminders: ReminderScheduler
         ra.toggled.connect(lambda on, k=kind: reminders.set_enabled(k, on))
         menu_rem.addAction(ra)
     menu.addSeparator()
+    a_import = QAction("导入宠物包…", menu)
+    a_import.triggered.connect(lambda: actions["import_pack"]())
+    menu.addAction(a_import)
+    menu_switch = menu.addMenu("切换宠物")
+    if rebuild_switch:
+        menu_switch.aboutToShow.connect(rebuild_switch)
     a_set = QAction("设置", menu)
     a_set.triggered.connect(lambda: actions["settings"]())
     menu.addAction(a_set)
@@ -386,7 +394,21 @@ def main(argv: list[str]) -> int:
     window.show()
 
     reminders = ReminderScheduler(pack.sense_cfg, t0=time.monotonic())
-    tray, tray_refs = _make_tray(app, actions, reminders)
+
+    def rebuild_switch_menu() -> None:
+        menu_switch.clear()
+        pets_dir = PROJ_ROOT / "pets"
+        current = window.pack.path.name
+        for p in sorted(pets_dir.iterdir()) if pets_dir.is_dir() else []:
+            if not p.is_dir():
+                continue
+            act = menu_switch.addAction(p.name + ("（当前）" if p.name == current else ""))
+            if p.name == current:
+                act.setEnabled(False)
+            else:
+                act.triggered.connect(lambda _=False, n=p.name: switch_to(n))
+
+    tray, tray_refs = _make_tray(app, actions, reminders, rebuild_switch_menu)
     tray_holder["tray"] = tray
 
     # ---- 设置界面（T5.3）：全部配置保存即生效 ----
@@ -438,7 +460,37 @@ def main(argv: list[str]) -> int:
         dialog.exec()
         refresh_tooltip()
 
+    def import_pack_dialog() -> None:
+        from PyQt6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(window, "选择宠物包 zip", str(PROJ_ROOT), "宠物包 (*.zip)")
+        if not path:
+            return
+        try:
+            name, warns = import_pack_zip(path, PROJ_ROOT / "pets")
+        except (PackImportError, PackError) as e:
+            bubble.place_above(window.frameGeometry())
+            bubble.show_text(f"（导入失败：{e}）", 10)
+            print(f"[导入] 失败：{e}", flush=True)
+            return
+        msg = f"「{name}」导入成功！托盘 → 切换宠物 可让她上场"
+        for w in warns:
+            msg += f"\n⚠ {w}"
+        bubble.place_above(window.frameGeometry())
+        bubble.show_text(msg, 12)
+        print(f"[导入] 成功：{name}（{path}）", flush=True)
+
+    def switch_to(name: str) -> None:
+        """切换宠物：拉起新实例（带 --pack）后自己退出"""
+        if getattr(sys, "frozen", False):
+            exe, args = sys.executable, ["--pack", str(PROJ_ROOT / "pets" / name)]
+        else:
+            exe = str(PROJ_ROOT / ".venv" / "Scripts" / "pythonw.exe")
+            args = [str(PROJ_ROOT / "main.py"), "--pack", str(PROJ_ROOT / "pets" / name)]
+        QProcess.startDetached(exe, args)
+        QApplication.quit()
+
     actions["settings"] = open_settings
+    actions["import_pack"] = import_pack_dialog
 
     def refresh_tooltip() -> None:
         tip = (f"{pack.name} · {evolution.stage} · 第 {evolution.day_count()} 天 / 连续 {evolution.streak} 天\n"

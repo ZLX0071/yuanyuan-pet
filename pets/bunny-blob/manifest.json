@@ -1,0 +1,166 @@
+{
+  "format_version": "1.0",
+  "meta": {
+    "name": "长耳团",
+    "author": "you",
+    "version": "1.0.0",
+    "description": "程序自绘示例包「长耳团」（模板生成，可自由改造）",
+    "license": "CC0"
+  },
+  "display": {
+    "scale": 1.0,
+    "anchor": "bottom_center"
+  },
+  "default_state": "idle",
+  "startup_state": "excited",
+  "startup_duration_s": 2.0,
+  "states": {
+    "idle": {
+      "frames": "sprites/idle/idle_*.png",
+      "fps": 2,
+      "loop": true
+    },
+    "walk": {
+      "frames": "sprites/walk/walk_*.png",
+      "fps": 6,
+      "loop": true,
+      "movement": {
+        "speed": 40
+      }
+    },
+    "sleep": {
+      "frames": "sprites/sleep/sleep_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "drag": {
+      "frames": "sprites/drag/drag_*.png",
+      "fps": 1,
+      "loop": true
+    },
+    "excited": {
+      "frames": "sprites/excited/excited_*.png",
+      "fps": 2,
+      "loop": true
+    }
+  },
+  "behaviors": [
+    {
+      "id": "wander",
+      "from": "idle",
+      "to": "walk",
+      "trigger": {
+        "type": "random",
+        "every_s": [
+          20,
+          90
+        ]
+      },
+      "duration_s": [
+        3,
+        8
+      ]
+    },
+    {
+      "id": "picked_up",
+      "from": "*",
+      "to": "drag",
+      "trigger": {
+        "type": "drag_start"
+      }
+    },
+    {
+      "id": "dropped",
+      "from": "drag",
+      "to": "idle",
+      "trigger": {
+        "type": "drag_end"
+      }
+    },
+    {
+      "id": "nap",
+      "from": "idle",
+      "to": "sleep",
+      "trigger": {
+        "type": "idle_time",
+        "s": 300
+      }
+    },
+    {
+      "id": "wake",
+      "from": [
+        "sleep",
+        "walk"
+      ],
+      "to": "idle",
+      "trigger": {
+        "type": "click"
+      }
+    },
+    {
+      "id": "greet",
+      "from": "*",
+      "to": "excited",
+      "trigger": {
+        "type": "double_click"
+      },
+      "duration_s": [
+        1.5,
+        2.5
+      ]
+    }
+  ],
+  "life": {
+    "decay_per_hour": {
+      "hunger": 4.0,
+      "mood": 3.0
+    },
+    "interactions": {
+      "feed": {
+        "hunger": 35,
+        "mood": 12,
+        "intimacy": 1,
+        "state": "excited",
+        "duration_s": 3
+      },
+      "pet": {
+        "mood": 6,
+        "intimacy": 1,
+        "state": "excited",
+        "duration_s": 2
+      }
+    },
+    "growth": [
+      {
+        "stage": "幼年期",
+        "min_intimacy": 0,
+        "scale": 0.85
+      },
+      {
+        "stage": "成长期",
+        "min_intimacy": 40,
+        "scale": 0.95
+      },
+      {
+        "stage": "成年期",
+        "min_intimacy": 100,
+        "scale": 1.05
+      }
+    ]
+  },
+  "sense": {
+    "reminders": {
+      "water": {
+        "every_min": 45,
+        "message": "汪！长耳团陪你去接杯水嘛…"
+      },
+      "rest": {
+        "every_min": 60,
+        "message": "盯屏幕很久啦，站起来伸个懒腰！"
+      }
+    }
+  },
+  "personality": {
+    "prompt": "你是长耳团，一只圆滚滚的小团子桌宠。说话简短爱撒娇。"
+  }
+}

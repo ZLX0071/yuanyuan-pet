@@ -153,6 +153,13 @@ class PetWindow(QWidget):
                 act.setEnabled(False)
             menu.addAction(act)
         menu.addSeparator()
+        import_act = QAction("导入宠物包…", menu)
+        if "import_pack" in self.actions:
+            import_act.triggered.connect(lambda _=False: self.actions["import_pack"]())
+        else:
+            import_act.setEnabled(False)
+        menu.addAction(import_act)
+        menu.addSeparator()
         focus_label = "结束专注" if (self.focus is not None and self.focus.on) else "开始专注 (25 分钟)"
         act = QAction(focus_label, menu)
         if "toggle_focus" in self.actions:
