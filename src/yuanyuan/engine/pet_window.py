@@ -161,7 +161,9 @@ class PetWindow(QWidget):
         settings.setEnabled(False)
         menu.addAction(settings)
         menu.addSeparator()
-        menu.addAction(QAction("退出", menu)).triggered.connect(self._quit)
+        quit_act = QAction("退出", menu)
+        quit_act.triggered.connect(self._quit)
+        menu.addAction(quit_act)
         menu.exec(self.mapToGlobal(QPoint(self.width() // 2, 0)))
 
     def _quit(self) -> None:
