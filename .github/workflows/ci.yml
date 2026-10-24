@@ -8,6 +8,9 @@ on:
 jobs:
   checks:
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"        # runner 的 PowerShell 默认 ANSI，中文输出会崩
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -16,7 +19,7 @@ jobs:
       - name: 运行全部验收脚本
         shell: pwsh
         run: |
-          $checks = @("check_loader", "check_import", "check_save", "check_sense", "check_m45", "check_schedule", "check_p0")
+          $checks = @("check_loader", "check_import", "check_save", "check_sense", "check_m45", "check_schedule", "check_p0", "check_p1")
           $failed = 0
           foreach ($c in $checks) {
             python "scripts/$c.py"
