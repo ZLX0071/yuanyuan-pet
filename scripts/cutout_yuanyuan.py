@@ -39,7 +39,7 @@ MANIFEST = {
         "description": "以家里真实小狗缘缘（奶白色卷毛小型犬）为原型的桌宠",
         "license": "私有素材：用户自有照片及其生成图，仅限本人使用",
     },
-    "display": {"scale": 1.0, "anchor": "bottom_center"},
+    "display": {"scale": 0.55, "anchor": "bottom_center"},  # 0.55 ≈ 211px，用户反馈原始 384px 过大
     "default_state": "idle",
     "startup_state": "excited",
     "startup_duration_s": 2.5,

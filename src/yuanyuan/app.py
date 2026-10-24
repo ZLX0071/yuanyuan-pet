@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction, QGuiApplication, QIcon, QPixmap, QPainter, QColor
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
@@ -80,8 +80,15 @@ def main(argv: list[str]) -> int:
     app = QApplication(argv)
     app.setQuitOnLastWindowClosed(False)
 
+    # display.scale：加载时一次性平滑缩放（此前该字段未生效，2026-10-24 按用户反馈修复）
     pixmaps = {
-        name: [QPixmap(str(p)) for p in st.frame_paths]
+        name: [
+            pm.scaled(
+                round(pm.width() * pack.scale), round(pm.height() * pack.scale),
+                Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation,
+            )
+            for pm in (QPixmap(str(p)) for p in st.frame_paths)
+        ]
         for name, st in pack.states.items()
     }
     sm = StateMachine(pack, pixmaps)
