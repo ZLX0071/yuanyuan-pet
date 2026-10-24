@@ -63,6 +63,8 @@ class PetWindow(QWidget):
             bottom_global = self.y() + self.height()
             bottom_new = self._physics.update(bottom_global, float(target_bottom))
             self.move(self.x(), int(bottom_new - self.height()))
+            if self._physics.mode == "rest":
+                print(f"[物理] 已落地：bottom_y={bottom_new:.0f}（目标 {target_bottom}），x={self.x()}", flush=True)
         else:
             # 行走：当前状态带 movement.speed 时水平位移
             state = self.pack.states[self.sm.current]
