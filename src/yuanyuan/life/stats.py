@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import datetime
 import time
 
 from ..content.models import PetPack
@@ -29,6 +30,7 @@ class Evolution:
         self.intimacy = float(st.get("intimacy", 0.0))
 
         self.stage = self._stage_for(self.intimacy)  # 先定阶段，离线播报要用
+        self._init_companionship()
 
         last = float(save.get("last_seen", time.time()))
         offline_h = min(max((time.time() - last) / 3600.0, 0.0), MAX_OFFLINE_H)
@@ -48,15 +50,61 @@ class Evolution:
     def tick(self, hours: float) -> None:
         self._decay(hours)
 
-    # ---- 交互（喂食/摸摸头，效果来自宠物包 life.interactions）----
+    # ---- 陪伴仪式感（M2.5-N3）：天数 / 连续陪伴 / 每日首喂双倍 ----
+    def _init_companionship(self) -> None:
+        today = datetime.date.today().isoformat()
+        self.first_day = str(self.save.get("first_day") or today)
+        self.save.set("first_day", self.first_day)
+        streak = int(self.save.get("streak", 1) or 1)
+        last = self.save.get("last_active_date")
+        if last != today:
+            yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+            self.streak = streak + 1 if last == yesterday else 1  # 断一天重计
+            self.save.set("streak", self.streak)
+            self.save.set("last_active_date", today)
+        else:
+            self.streak = streak
+
+    def day_count(self) -> int:
+        try:
+            first = datetime.date.fromisoformat(self.first_day)
+            return (datetime.date.today() - first).days + 1
+        except ValueError:
+            return 1
+
+    def stage_scale(self) -> float:
+        """当前成长阶段对应的体型倍率（N4 成长可视化）"""
+        current: dict = {"scale": 1.0}
+        for s in (self.pack.growth_stages or []):
+            if self.intimacy >= float(s.get("min_intimacy", 0)):
+                current = s
+        return float(current.get("scale", 1.0))
+
+    # ---- 交互（效果来自宠物包 life.interactions；hunger 可为负=消耗）----
     def do(self, interaction_id: str) -> tuple[str, float] | None:
+        """执行交互。返回 (state, duration)；冷却中返回 ("__cooldown__", 0)。"""
         cfg = (self.pack.life_interactions or {}).get(interaction_id) \
             or DEFAULT_INTERACTIONS.get(interaction_id)
         if not cfg:
             return None
-        self.hunger = min(100.0, self.hunger + float(cfg.get("hunger", 0)))
-        self.mood = min(100.0, self.mood + float(cfg.get("mood", 0)))
-        self.intimacy = min(100.0, self.intimacy + float(cfg.get("intimacy", 0)))
+        today = datetime.date.today().isoformat()
+        gain_mul = 1.0
+        if interaction_id == "feed" and self.save.get("last_feed_date") != today:
+            gain_mul = 2.0  # 每日首喂双倍亲密度（稀缺感）
+            self.save.set("last_feed_date", today)
+            print("[养成] 今日首喂，亲密度双倍！", flush=True)
+        cd_min = float(cfg.get("cooldown_min", 0) or 0)
+        if cd_min > 0:
+            last_use = float(self.save.get(f"last_use_{interaction_id}", 0) or 0)
+            if time.time() - last_use < cd_min * 60:
+                return ("__cooldown__", 0.0)
+            self.save.set(f"last_use_{interaction_id}", time.time())
+        mood_gain = float(cfg.get("mood", 0))
+        if self.mood < 30:
+            mood_gain *= 0.5  # 心情低落：蔫了，互动效果减半（数值耦合）
+        self.hunger = max(0.0, min(100.0, self.hunger + float(cfg.get("hunger", 0))))
+        self.mood = max(0.0, min(100.0, self.mood + mood_gain))
+        self.intimacy = min(100.0, self.intimacy + float(cfg.get("intimacy", 0)) * gain_mul)
         self.save_stats()
         state = cfg.get("state")
         duration = float(cfg.get("duration_s", 0)) or None

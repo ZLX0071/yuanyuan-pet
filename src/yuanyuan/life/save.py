@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -15,14 +16,17 @@ def _init_kv_table(conn: sqlite3.Connection) -> None:
 
 
 class Save:
+    """单连接 + 线程锁：AI 工作线程也会读写存档（check_same_thread=False + Lock）。"""
+
     def __init__(self, db_path: str | Path):
         self.path = Path(db_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
         self._conn = self._open()
 
     def _open(self) -> sqlite3.Connection:
         try:
-            conn = sqlite3.connect(self.path)
+            conn = sqlite3.connect(self.path, check_same_thread=False)
             try:
                 _init_kv_table(conn)
             except sqlite3.DatabaseError:
@@ -31,7 +35,7 @@ class Save:
             return conn
         except sqlite3.DatabaseError:
             self._quarantine()
-            conn = sqlite3.connect(self.path)
+            conn = sqlite3.connect(self.path, check_same_thread=False)
             _init_kv_table(conn)
             return conn
 
@@ -48,12 +52,13 @@ class Save:
                 print(f"⚠ 存档损坏且无法清理（{e}）", flush=True)
 
     def get(self, key: str, default=None):
-        try:
-            row = self._conn.execute(
-                "SELECT value FROM kv WHERE key = ?", (key,)
-            ).fetchone()
-        except sqlite3.DatabaseError:
-            return default
+        with self._lock:
+            try:
+                row = self._conn.execute(
+                    "SELECT value FROM kv WHERE key = ?", (key,)
+                ).fetchone()
+            except sqlite3.DatabaseError:
+                return default
         if row is None:
             return default
         try:
@@ -62,15 +67,17 @@ class Save:
             return default
 
     def set(self, key: str, value) -> None:
-        self._conn.execute(
-            "INSERT INTO kv(key, value) VALUES(?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, json.dumps(value, ensure_ascii=False)),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO kv(key, value) VALUES(?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, json.dumps(value, ensure_ascii=False)),
+            )
+            self._conn.commit()
 
     def close(self) -> None:
-        try:
-            self._conn.close()
-        except sqlite3.Error:
-            pass
+        with self._lock:
+            try:
+                self._conn.close()
+            except sqlite3.Error:
+                pass

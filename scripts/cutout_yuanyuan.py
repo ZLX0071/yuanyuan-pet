@@ -31,6 +31,8 @@ JOBS = [
     ("12-叼零食-求投喂.jpg", "hungry"),
     ("02-绿围兜坐姿-进食.jpg", "eat"),
     ("08-叼球-玩耍.jpg", "play"),
+    ("03-泡泡浴-彩蛋.jpg", "bath"),
+    ("05-蓝裙握手-互动.jpg", "shake"),
 ]
 
 MANIFEST = {
@@ -57,6 +59,8 @@ MANIFEST = {
         "hungry": {"frames": "sprites/hungry/hungry_*.png", "fps": 1, "loop": True},
         "eat": {"frames": "sprites/eat/eat_*.png", "fps": 1, "loop": True},
         "play": {"frames": "sprites/play/play_*.png", "fps": 1, "loop": True},
+        "bath": {"frames": "sprites/bath/bath_*.png", "fps": 1, "loop": True},
+        "shake": {"frames": "sprites/shake/shake_*.png", "fps": 1, "loop": True},
     },
     "behaviors": [
         {"id": "wander", "from": "idle", "to": "walk",
@@ -99,12 +103,15 @@ MANIFEST = {
         "decay_per_hour": {"hunger": 4.0, "mood": 3.0},
         "interactions": {
             "feed": {"hunger": 35, "mood": 12, "intimacy": 1, "state": "eat", "duration_s": 4},
-            "pet": {"mood": 6, "intimacy": 1, "state": "excited", "duration_s": 2}
+            "pet": {"mood": 6, "intimacy": 1, "state": "excited", "duration_s": 2},
+            "play_ball": {"mood": 18, "hunger": -8, "intimacy": 1, "state": "play", "duration_s": 5},
+            "shake": {"mood": 4, "intimacy": 1, "state": "shake", "duration_s": 3},
+            "bath": {"mood": 15, "intimacy": 1, "state": "bath", "duration_s": 5, "cooldown_min": 720}
         },
         "growth": [
-            {"stage": "幼年期", "min_intimacy": 0},
-            {"stage": "成长期", "min_intimacy": 40},
-            {"stage": "成年期", "min_intimacy": 100}
+            {"stage": "幼年期", "min_intimacy": 0, "scale": 0.85},
+            {"stage": "成长期", "min_intimacy": 40, "scale": 0.95},
+            {"stage": "成年期", "min_intimacy": 100, "scale": 1.05}
         ]
     },
     "personality": {

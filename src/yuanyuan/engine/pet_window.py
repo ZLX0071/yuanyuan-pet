@@ -48,6 +48,13 @@ class PetWindow(QWidget):
         self._anim_timer.timeout.connect(self._tick)
         self._anim_timer.start(33)  # ~30fps
 
+    def apply_size(self, w: int, h: int) -> None:
+        """成长体型变化：改窗口尺寸并保持脚底不挪窝"""
+        bottom = self.y() + self.height()
+        self.resize(w, h)
+        self._floor_bottom_y = float(h)
+        self.move(self.x(), int(bottom - h))
+
     # ---- 布局 ----
     def place_on(self, screen) -> None:
         """开机：从屏幕顶上方掉落，落到任务栏上沿。screen 为 QScreen。"""
@@ -129,16 +136,19 @@ class PetWindow(QWidget):
         if e.button() == Qt.MouseButton.LeftButton:
             self.sm.on_event("double_click")
 
-    # ---- 右键菜单（喂食/摸摸头 M2，静默 M3；设置为 M5 占位）----
+    # ---- 右键菜单（喂食/摸摸头/玩球/握手/洗澡/说话/静默；设置为 M5 占位）----
     def contextMenuEvent(self, _event) -> None:
         menu = QMenu(self)
-        for label, key in (("喂食", "feed"), ("摸摸头", "pet")):
+        items = (("喂食", "feed"), ("摸摸头", "pet"), ("玩球", "play_ball"),
+                 ("握手", "shake"), ("洗澡", "bath"), ("跟缘缘说话", "chat"))
+        for label, key in items:
             act = QAction(label, menu)
             if key in self.actions:
                 act.triggered.connect(lambda _=False, k=key: self.actions[k]())
             else:
                 act.setEnabled(False)
             menu.addAction(act)
+        menu.addSeparator()
         silent_label = "取消静默" if self.silent.get("on") else "静默模式"
         act = QAction(silent_label, menu)
         if "toggle_silent" in self.actions:
