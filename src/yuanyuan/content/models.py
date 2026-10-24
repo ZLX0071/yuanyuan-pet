@@ -48,6 +48,7 @@ class PetPack:
     life_decay: dict | None = None         # {"hunger": 4.0, "mood": 3.0} 每小时衰减
     life_interactions: dict | None = None  # {"feed": {...}, "pet": {...}} 交互效果
     growth_stages: list | None = None      # [{"stage": "幼年期", "min_intimacy": 0}, ...]
+    sense_cfg: dict | None = None          # {"reminders": {...}} 感知/提醒配置（M3）
     warnings: list[str] = field(default_factory=list)  # 非致命问题
 
     def summary(self) -> str:

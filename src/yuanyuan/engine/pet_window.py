@@ -17,11 +17,13 @@ DRAG_THRESHOLD = 6  # px；超过视为拖拽而非点击
 
 
 class PetWindow(QWidget):
-    def __init__(self, pack: PetPack, sm: StateMachine, actions: dict | None = None):
+    def __init__(self, pack: PetPack, sm: StateMachine, actions: dict | None = None,
+                 silent: dict | None = None):
         super().__init__()
         self.pack = pack
         self.sm = sm
-        self.actions = actions or {}  # {"feed": fn, "pet": fn}（M2 交互）
+        self.actions = actions or {}  # {"feed": fn, "pet": fn, "toggle_silent": fn}
+        self.silent = silent or {}    # {"on": bool} 共享状态（M3 静默模式）
         self._drag_offset: QPoint | None = None
         self._press_pos: QPoint | None = None
         self._moved = False
@@ -127,7 +129,7 @@ class PetWindow(QWidget):
         if e.button() == Qt.MouseButton.LeftButton:
             self.sm.on_event("double_click")
 
-    # ---- 右键菜单（喂食/摸摸头为 M2 真功能；静默/设置仍为占位）----
+    # ---- 右键菜单（喂食/摸摸头 M2，静默 M3；设置为 M5 占位）----
     def contextMenuEvent(self, _event) -> None:
         menu = QMenu(self)
         for label, key in (("喂食", "feed"), ("摸摸头", "pet")):
@@ -137,11 +139,17 @@ class PetWindow(QWidget):
             else:
                 act.setEnabled(False)
             menu.addAction(act)
-        menu.addSeparator()
-        for label in ("静默模式（M3）", "设置（M5）"):
-            act = QAction(label, menu)
+        silent_label = "取消静默" if self.silent.get("on") else "静默模式"
+        act = QAction(silent_label, menu)
+        if "toggle_silent" in self.actions:
+            act.triggered.connect(lambda _=False: self.actions["toggle_silent"]())
+        else:
             act.setEnabled(False)
-            menu.addAction(act)
+        menu.addAction(act)
+        menu.addSeparator()
+        settings = QAction("设置（M5）", menu)
+        settings.setEnabled(False)
+        menu.addAction(settings)
         menu.addSeparator()
         menu.addAction(QAction("退出", menu)).triggered.connect(self._quit)
         menu.exec(self.mapToGlobal(QPoint(self.width() // 2, 0)))

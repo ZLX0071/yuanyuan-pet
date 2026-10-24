@@ -63,6 +63,23 @@ class StateMachine(QObject):
                 self.fire(b)
                 return
 
+    def on_sense(self, name: str) -> None:
+        """感知事件（聚合器产出，主线程调用）→ 匹配宠物包里的 sense 行为"""
+        now = time.monotonic()
+        if not self._dwell_ok(now):
+            return
+        for b in self.pack.behaviors:
+            if (b.trigger.type == "sense" and b.trigger.params.get("event") == name
+                    and self._cooldown_ok(b, now) and self._can_fire(b)):
+                self.fire(b)
+                return
+
+    def _dwell_ok(self, now: float) -> bool:
+        return now - self._last_auto >= AUTO_DWELL_S
+
+    def _cooldown_ok(self, b: Behavior, now: float) -> bool:
+        return now - getattr(b, "_last_fired", -1e18) >= b.cooldown
+
     # ---- 决策 ----
     def _tick(self) -> None:
         now = time.monotonic()
@@ -70,12 +87,12 @@ class StateMachine(QObject):
             self._behavior_until = None
             self._transition(self.pack.default_state)
             return
-        if now - self._last_auto < AUTO_DWELL_S:
+        if not self._dwell_ok(now):
             return  # 最短停留期内不做自动决策
         for b in self.pack.behaviors:
             if b.trigger.type not in AUTO_TRIGGERS:
                 continue
-            if now - getattr(b, "_last_fired", -1e18) < b.cooldown:
+            if not self._cooldown_ok(b, now):
                 continue  # 行为冷却中
             t = b.trigger.type
             if t == "random":

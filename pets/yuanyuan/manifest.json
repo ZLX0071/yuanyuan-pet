@@ -190,9 +190,58 @@
       "trigger": {
         "type": "sense",
         "event": "typing_burst"
-      }
+      },
+      "duration_s": [
+        3,
+        5
+      ]
+    },
+    {
+      "id": "greet_return",
+      "from": [
+        "idle",
+        "walk"
+      ],
+      "to": "excited",
+      "trigger": {
+        "type": "sense",
+        "event": "user_return"
+      },
+      "duration_s": [
+        2.5,
+        3.5
+      ]
+    },
+    {
+      "id": "nudge_rest",
+      "from": [
+        "idle",
+        "walk",
+        "hungry"
+      ],
+      "to": "excited",
+      "trigger": {
+        "type": "sense",
+        "event": "work_marathon"
+      },
+      "duration_s": [
+        3,
+        4.5
+      ]
     }
   ],
+  "sense": {
+    "reminders": {
+      "water": {
+        "every_min": 45,
+        "message": "汪！陪我去接杯水嘛，就一口…"
+      },
+      "rest": {
+        "every_min": 60,
+        "message": "盯屏幕很久啦汪！站起来伸个懒腰，我看着你～"
+      }
+    }
+  },
   "life": {
     "decay_per_hour": {
       "hunger": 4.0,

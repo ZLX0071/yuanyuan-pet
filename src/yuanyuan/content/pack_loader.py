@@ -128,6 +128,9 @@ def load_pack(pack_dir: str | Path) -> PetPack:
     life = raw.get("life") or {}
     if not isinstance(life, dict):
         raise PackError("life 段应该是一个 {…} 对象")
+    sense = raw.get("sense") or {}
+    if not isinstance(sense, dict):
+        raise PackError("sense 段应该是一个 {…} 对象")
 
     return PetPack(
         path=pack_dir, name=str(meta["name"]),
@@ -141,5 +144,6 @@ def load_pack(pack_dir: str | Path) -> PetPack:
         life_decay=life.get("decay_per_hour"),
         life_interactions=life.get("interactions"),
         growth_stages=life.get("growth"),
+        sense_cfg=sense,
         warnings=warnings,
     )

@@ -1,12 +1,14 @@
-"""组装层：加载宠物包 → 养成层 → 状态机 → 宠物窗口（含托盘/交互/smoke 模式）"""
+"""组装层：宠物包 → 养成层 → 状态机 → 窗口；感知层（键鼠→聚合→sense 行为）+ 提醒 + 静默"""
 
 from __future__ import annotations
 
 import argparse
+import queue
 import sys
 import time
 from pathlib import Path
 
+import psutil
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
@@ -17,6 +19,9 @@ from yuanyuan.engine.animator import StateMachine
 from yuanyuan.engine.pet_window import PetWindow
 from yuanyuan.life.save import Save
 from yuanyuan.life.stats import Evolution
+from yuanyuan.sense.events import SenseAggregator
+from yuanyuan.sense.hooks import ForegroundPoller, start_hooks
+from yuanyuan.sense.reminders import ReminderScheduler
 
 PROJ_ROOT = Path(__file__).resolve().parents[2]
 
@@ -38,26 +43,31 @@ def _tray_icon_pixmap() -> QPixmap:
     return pm
 
 
-def _make_tray(app: QApplication, actions: dict) -> QSystemTrayIcon:
+def _make_tray(app: QApplication, actions: dict, reminders: ReminderScheduler
+               ) -> tuple[QSystemTrayIcon, dict]:
     tray = QSystemTrayIcon(QIcon(_tray_icon_pixmap()), app)
     menu = QMenu()
     for label, key in (("喂食", "feed"), ("摸摸头", "pet")):
         act = QAction(label, menu)
-        if key in actions:
-            act.triggered.connect(lambda _=False, k=key: actions[k]())
-        else:
-            act.setEnabled(False)
+        act.triggered.connect(lambda _=False, k=key: actions[k]())
         menu.addAction(act)
     menu.addSeparator()
-    for label in ("静默模式（M3）", "设置（M5）"):
-        act = menu.addAction(label)
-        act.setEnabled(False)
+    a_silent = QAction("静默模式 (Ctrl+Alt+Y)", menu)
+    a_silent.triggered.connect(lambda: actions["toggle_silent"]())
+    menu.addAction(a_silent)
+    menu_rem = menu.addMenu("提醒")
+    for kind, label in (("water", "喝水提醒"), ("rest", "久坐提醒")):
+        ra = QAction(label, menu_rem)
+        ra.setCheckable(True)
+        ra.setChecked(reminders.is_enabled(kind))
+        ra.toggled.connect(lambda on, k=kind: reminders.set_enabled(k, on))
+        menu_rem.addAction(ra)
     menu.addSeparator()
     quit_act = menu.addAction("退出")
     quit_act.triggered.connect(app.quit)
     tray.setContextMenu(menu)
     tray.show()
-    return tray
+    return tray, {"silent": a_silent}
 
 
 def main(argv: list[str]) -> int:
@@ -75,7 +85,6 @@ def main(argv: list[str]) -> int:
         print("pets/ 下没有宠物包。先运行 scripts/make_demo_pack.py 生成示例包。")
         return 1
 
-    # 加载包（人话报错）
     try:
         pack: PetPack = load_pack(args.pack)
     except PackError as e:
@@ -88,12 +97,12 @@ def main(argv: list[str]) -> int:
     app = QApplication(argv)
     app.setQuitOnLastWindowClosed(False)
 
-    # 养成层（T2.1~T2.5）
+    # 养成层
     save = Save(PROJ_ROOT / "data" / f"pet-{pack.name}.db")
     evolution = Evolution(pack, save)
     print(f"[养成] {evolution.summary()}")
 
-    # display.scale：加载时一次性平滑缩放（此前该字段未生效，2026-10-24 按用户反馈修复）
+    # display.scale：加载时一次性平滑缩放
     pixmaps = {
         name: [
             pm.scaled(
@@ -116,7 +125,10 @@ def main(argv: list[str]) -> int:
     def refresh_tooltip() -> None:
         tray = tray_holder.get("tray")
         if tray:
-            tray.setToolTip(f"{pack.name} · {evolution.stage} · 亲密度 {evolution.intimacy:.0f}")
+            tip = f"{pack.name} · {evolution.stage} · 亲密度 {evolution.intimacy:.0f}"
+            if silent.get("on"):
+                tip += " · 静默中"
+            tray.setToolTip(tip)
 
     def on_interact(iid: str) -> None:
         sm.note_interaction()  # 菜单交互也算互动：重置闲置/睡觉计时
@@ -130,16 +142,39 @@ def main(argv: list[str]) -> int:
         print(f"[养成] {iid}: {evolution.summary()}", flush=True)
         refresh_tooltip()
 
-    actions = {"feed": lambda: on_interact("feed"), "pet": lambda: on_interact("pet")}
+    # 感知层（T3.2~T3.5）
+    silent = {"on": False}
+    raw_q: queue.Queue = queue.Queue()
+    try:
+        hooks = start_hooks(raw_q)
+        print("[感知] 键盘/鼠标/全局热键监听已启动（Ctrl+Alt+Y 静默）", flush=True)
+    except Exception as e:  # 兜底：监听失败不拦住整个应用
+        hooks = None
+        print(f"⚠ 键鼠监听启动失败（{e}），提醒与静默热键不可用", flush=True)
+    aggregator = SenseAggregator(t0=time.monotonic())
+    poller = ForegroundPoller()
+    reminders = ReminderScheduler(pack.sense_cfg, t0=time.monotonic())
 
-    window = PetWindow(pack, sm, actions)
+    actions: dict = {"feed": lambda: on_interact("feed"), "pet": lambda: on_interact("pet")}
+
+    window = PetWindow(pack, sm, actions, silent)
     window.place_on(app.primaryScreen())
     window.show()
-    tray_holder["tray"] = _make_tray(app, actions)
-    refresh_tooltip()
-    print(f"[缘缘] 「{pack.name}」已上桌：拖拽 / 双击互动 / 右键喂食摸摸头 / 托盘退出", flush=True)
 
-    # 生命周期：每分钟演化一次并存档（T2.2）
+    def toggle_silent() -> None:
+        silent["on"] = not silent["on"]
+        (window.hide if silent["on"] else window.show)()
+        tray_refs["silent"].setText("取消静默 (Ctrl+Alt+Y)" if silent["on"] else "静默模式 (Ctrl+Alt+Y)")
+        refresh_tooltip()
+        print(f"[静默] {'开启：宠物隐藏，提醒暂停' if silent['on'] else '关闭'}", flush=True)
+
+    actions["toggle_silent"] = toggle_silent
+    tray, tray_refs = _make_tray(app, actions, reminders)
+    tray_holder["tray"] = tray
+    refresh_tooltip()
+    print(f"[缘缘] 「{pack.name}」已上桌：拖拽 / 双击互动 / 右键菜单 / Ctrl+Alt+Y 静默", flush=True)
+
+    # 养成：每分钟演化 + 存档
     def life_tick() -> None:
         evolution.tick((1 / 60) * args.fast_life)
         evolution.save_stats()
@@ -147,8 +182,56 @@ def main(argv: list[str]) -> int:
 
     life_timer = QTimer()
     life_timer.timeout.connect(life_tick)
-    life_timer.start(60_000 if args.smoke <= 0 else 1_000)  # smoke 模式下每秒演化一次便于验收
-    app.aboutToQuit.connect(save.close)
+    life_timer.start(60_000 if args.smoke <= 0 else 1_000)
+
+    # 感知：4Hz 汇聚原始事件 → 高层事件 → sense 行为 / 提醒
+    fullscreen = {"on": False}
+
+    def sense_tick() -> None:
+        now = time.monotonic()
+        if hooks is not None:
+            moved = hooks["state"]["last_move"]
+            if moved > aggregator.last_move_seen:
+                aggregator.last_move_seen = moved
+                aggregator.feed("move", moved)
+            try:
+                while True:
+                    kind, t = raw_q.get_nowait()
+                    if kind == "hotkey_silent":
+                        toggle_silent()
+                        continue
+                    aggregator.feed(kind, t)
+            except queue.Empty:
+                pass
+        hwnd, changed = poller.poll()
+        fullscreen["on"] = poller.is_fullscreen(hwnd)
+        if changed:
+            aggregator.set_foreground_changed(now)
+        for ev in aggregator.poll(now):
+            print(f"[感知] {ev}", flush=True)
+            sm.on_sense(ev)
+        for kind, message in reminders.due(now):
+            if silent["on"] or fullscreen["on"]:
+                continue  # 延后：不 mark_fired，下个周期继续到期
+            tray.showMessage("缘缘提醒", message, QSystemTrayIcon.MessageIcon.Information, 6000)
+            reminders.mark_fired(kind, now)
+            sm.force(pack.startup_state or pack.default_state, 2.5)
+            print(f"[提醒] {kind}: {message}", flush=True)
+
+    sense_timer = QTimer()
+    sense_timer.timeout.connect(sense_tick)
+    sense_timer.start(250)
+
+    def stop_everything() -> None:
+        save.close()
+        if hooks is not None:
+            for k in ("keyboard", "mouse", "hotkeys"):
+                try:
+                    hooks[k].stop()
+                except Exception:
+                    pass
+
+    app.aboutToQuit.connect(stop_everything)
 
     if args.smoke > 0:
         def finish_smoke() -> None:
@@ -156,6 +239,10 @@ def main(argv: list[str]) -> int:
             shot_dir.mkdir(exist_ok=True)
             path = shot_dir / f"演示截图-{pack.name}.png"
             window.grab().save(str(path))
+            proc = psutil.Process()
+            cpu = proc.cpu_percent(interval=1.5)
+            mem = proc.memory_info().rss / 1024 / 1024
+            print(f"[性能] 含感知监听空闲：CPU 单核 {cpu:.1f}% | 内存 {mem:.0f} MB")
             print(f"[养成] 结束时 {evolution.summary()}")
             print(f"[smoke] {args.smoke}s 运行结束，截图 {path}")
             app.quit()
