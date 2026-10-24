@@ -8,7 +8,7 @@
     "license": "私有素材：用户自有照片及其生成图，仅限本人使用"
   },
   "display": {
-    "scale": 0.4,
+    "scale": 0.42,
     "anchor": "bottom_center"
   },
   "default_state": "idle",
@@ -238,6 +238,19 @@
         3,
         4.5
       ]
+    },
+    {
+      "id": "late_night",
+      "from": [
+        "idle",
+        "walk",
+        "hungry"
+      ],
+      "to": "dozy",
+      "trigger": {
+        "type": "sense",
+        "event": "late_night"
+      }
     }
   ],
   "sense": {

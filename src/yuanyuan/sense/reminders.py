@@ -1,11 +1,28 @@
-"""提醒调度（T3.4）：喝水 / 久坐。到期由应用层检查，全屏或静默时自动延后（不推进计时）。"""
+"""提醒调度（T3.4 + P0-3 免打扰）：喝水 / 久坐。全屏/静默/免打扰时段自动延后。"""
 
 from __future__ import annotations
+
+import datetime
 
 DEFAULT_REMINDERS = {
     "water": {"every_min": 45, "message": "汪！陪你去接杯水嘛…", "enabled": True},
     "rest": {"every_min": 60, "message": "盯屏幕很久啦，站起来伸个懒腰！", "enabled": True},
 }
+
+
+def in_dnd(cfg: dict | None, now: datetime.datetime) -> bool:
+    """免打扰时段判定；支持跨午夜窗口（如 23:00-08:00）。cfg: {enabled,start,end}"""
+    if not cfg or not cfg.get("enabled"):
+        return False
+    try:
+        start = datetime.time.fromisoformat(str(cfg.get("start", "23:00")))
+        end = datetime.time.fromisoformat(str(cfg.get("end", "08:00")))
+    except ValueError:
+        return False
+    cur = now.time()
+    if start <= end:
+        return start <= cur < end
+    return cur >= start or cur < end  # 跨午夜
 
 
 class ReminderScheduler:

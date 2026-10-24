@@ -19,15 +19,17 @@ from PyQt6.QtCore import QLockFile, QProcess, Qt, QTimer
 from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from yuanyuan.ai.notes import (NOTE_VIEW_RE, add_note, due_notes, extract_note,
-                               mark_reminded, pending_notes)
+from yuanyuan.ai.notes import (NOTE_VIEW_RE, add_note, delete_note, due_notes,
+                               extract_note, mark_reminded, pending_notes)
 from yuanyuan.ai.provider import AIError, Provider, load_ai_config
 from yuanyuan.autostart import get_autostart, set_autostart
+from yuanyuan.config import load_config, save_section
 from yuanyuan.content.models import PetPack
 from yuanyuan.content.pack_import import ImportError_ as PackImportError
 from yuanyuan.content.pack_import import import_pack_zip
 from yuanyuan.content.pack_loader import PackError, load_pack
 from yuanyuan.engine.animator import StateMachine
+from yuanyuan.engine.notes_dialog import NotesDialog
 from yuanyuan.engine.bubble import Bubble, ChatInput
 from yuanyuan.engine.pet_window import PetWindow
 from yuanyuan.life.save import Save
@@ -37,7 +39,7 @@ from yuanyuan.sense.calendar import CalendarWatch
 from yuanyuan.sense.events import SenseAggregator
 from yuanyuan.sense.focus import FocusTimer
 from yuanyuan.sense.hooks import ForegroundPoller, start_hooks
-from yuanyuan.sense.reminders import ReminderScheduler
+from yuanyuan.sense.reminders import ReminderScheduler, in_dnd
 from yuanyuan.settings_dialog import SettingsDialog
 
 if getattr(sys, "frozen", False):
@@ -130,8 +132,9 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="缘缘桌宠")
     default_pack = PROJ_ROOT / "pets"
     packs = sorted(d for d in default_pack.iterdir() if d.is_dir()) if default_pack.is_dir() else []
-    if len(packs) > 1:  # 缘缘包优先作为默认（否则 demo-blob 会排在前）
-        packs.sort(key=lambda p: (p.name != "yuanyuan", p.name))
+    if len(packs) > 1:  # 上次玩的那只优先，其次缘缘（P0-1）
+        last = str((load_config(PROJ_ROOT / "data" / "config.json").get("ui") or {}).get("last_pack", ""))
+        packs.sort(key=lambda p: (p.name != last, p.name != "yuanyuan", p.name))
     parser.add_argument("--pack", type=Path, default=packs[0] if packs else None,
                         help="宠物包目录（默认取 pets/ 下第一个）")
     parser.add_argument("--smoke", type=float, default=0.0,
@@ -186,6 +189,13 @@ def main(argv: list[str]) -> int:
     except PackError as e:
         print(f"❌ 宠物包加载失败：{e}")
         return 1
+    # 记住这只宠物（P0-1）
+    try:
+        save_section(PROJ_ROOT / "data" / "config.json", "ui",
+                     {**(load_config(PROJ_ROOT / "data" / "config.json").get("ui") or {}),
+                      "last_pack": pack.path.name})
+    except OSError as e:
+        print(f"⚠ 记不住上次宠物（{e}）", flush=True)
     print(pack.summary())
     for w in pack.warnings:
         print(f"⚠ {w}")
@@ -315,6 +325,8 @@ def main(argv: list[str]) -> int:
         """T4.5 主动搭话：特定感知事件低频触发，每日上限来自宠物包 personality.proactive"""
         if ai_holder["provider"] is None or silent["on"] or fullscreen["on"] or focus.on:
             return
+        if in_dnd(dnd_holder["cfg"], datetime.datetime.now()):  # P0-3：免打扰时段不主动说话
+            return
         max_n = int((pack.personality or {}).get("proactive", {}).get("max_per_day", 5))
         key = f"proactive_{time.strftime('%Y%m%d')}"
         count = int(save.get(key, 0) or 0)
@@ -393,6 +405,12 @@ def main(argv: list[str]) -> int:
 
     window = PetWindow(pack, sm, actions=actions, silent=silent, focus=focus)
     window.place_on(app.primaryScreen())
+    # P0-1：站回上次的位置（仍然从空中掉落到那个点）
+    saved_x = save.get("pet_x")
+    if isinstance(saved_x, (int, float)):
+        geo = app.primaryScreen().availableGeometry()
+        clamped = max(geo.left(), min(int(saved_x), geo.right() - window.width()))
+        window.move(clamped, window.y())
     window.show()
 
     reminders = ReminderScheduler(pack.sense_cfg, t0=time.monotonic())
@@ -415,8 +433,7 @@ def main(argv: list[str]) -> int:
 
     # ---- 设置界面（T5.3）：全部配置保存即生效 ----
     def save_ai_cfg(cfg: dict) -> None:
-        (PROJ_ROOT / "data" / "config.json").write_text(
-            json.dumps({"ai": cfg}, ensure_ascii=False, indent=2), encoding="utf-8")
+        save_section(PROJ_ROOT / "data" / "config.json", "ai", cfg)  # 按节合并，不清掉 ui/dnd
         ai_holder["cfg"] = cfg
         try:
             ai_holder["provider"] = Provider(cfg)
@@ -456,6 +473,9 @@ def main(argv: list[str]) -> int:
             "set_autostart": lambda enabled: set_autostart(enabled, autostart_cmd),
             "get_schedule": lambda: save.get("schedule") or {},
             "save_schedule": lambda data: (save.set("schedule", data), schedule.reload()),
+            "get_dnd": lambda: load_config(PROJ_ROOT / "data" / "config.json").get("dnd") or {},
+            "save_dnd": lambda data: (save_section(PROJ_ROOT / "data" / "config.json", "dnd", data),
+                                      dnd_holder.__setitem__("cfg", data)),
             "pack_states": sorted(pack.states),
         }
         dialog = SettingsDialog(ctx)
@@ -483,6 +503,7 @@ def main(argv: list[str]) -> int:
 
     def switch_to(name: str) -> None:
         """切换宠物：拉起新实例（带 --pack）后自己退出"""
+        save.set("pet_x", window.x())  # 位置留给下一只（P0-1）
         if getattr(sys, "frozen", False):
             exe, args = sys.executable, ["--pack", str(PROJ_ROOT / "pets" / name)]
         else:
@@ -491,6 +512,13 @@ def main(argv: list[str]) -> int:
         QProcess.startDetached(exe, args)
         QApplication.quit()
 
+    def open_notes() -> None:  # P0-2：记事管理窗
+        ctx = {"get_notes": lambda: pending_notes(save),
+               "on_done": lambda i: delete_note(save, i),
+               "on_delete": lambda i: delete_note(save, i)}
+        NotesDialog(ctx).exec()
+
+    actions["notes"] = open_notes
     actions["settings"] = open_settings
     actions["import_pack"] = import_pack_dialog
 
@@ -517,6 +545,7 @@ def main(argv: list[str]) -> int:
     aggregator = SenseAggregator(t0=time.monotonic())
     poller = ForegroundPoller()
     last_reply = {"text": None}
+    dnd_holder = {"cfg": load_config(PROJ_ROOT / "data" / "config.json").get("dnd")}  # P0-3 免打扰
 
     def sense_tick() -> None:
         now = time.monotonic()
@@ -552,8 +581,10 @@ def main(argv: list[str]) -> int:
             sm.on_sense(ev)
             if ev in ("user_return", "work_marathon"):
                 maybe_proactive(ev)
+        now_dt = datetime.datetime.now()
+        dnd_now = in_dnd(dnd_holder["cfg"], now_dt)  # P0-3：免打扰时段 → 提醒/日程/记事全部延后
         for kind, message in reminders.due(now):
-            if silent["on"] or fullscreen["on"]:
+            if silent["on"] or fullscreen["on"] or dnd_now:
                 continue  # 延后：不 mark_fired，下个周期继续到期
             tray.showMessage("缘缘提醒", message, QSystemTrayIcon.MessageIcon.Information, 6000)
             reminders.mark_fired(kind, now)
@@ -569,14 +600,18 @@ def main(argv: list[str]) -> int:
             tray.showMessage("专注完成！", f"第 {count} 个番茄钟达成，缘缘很开心！", QSystemTrayIcon.MessageIcon.Information, 6000)
             print(f"[专注] 完成，今天第 {count} 个", flush=True)
             refresh_tooltip()
-        for summary, start in calendar_watch.scan(datetime.datetime.now()):  # 日历（F-C）
+        for summary, start in calendar_watch.scan(now_dt):  # 日历（F-C）
+            if dnd_now:
+                continue
             msg = f"{summary}（{start:%H:%M} 开始）"
             tray.showMessage("日程提醒", msg, QSystemTrayIcon.MessageIcon.Information, 6000)
             bubble.place_above(window.frameGeometry())
             bubble.show_text(f"（快到日程啦：{summary}！）", 10)
             sm.force(pack.startup_state or pack.default_state, 2.5)
             print(f"[日程] {msg}", flush=True)
-        for n in due_notes(save, datetime.datetime.now()):  # 记事到期（F-B）
+        for n in due_notes(save, now_dt):  # 记事到期（F-B）
+            if dnd_now:
+                continue
             mark_reminded(save, n["id"])
             msg = f"别忘了：{n['text']}"
             tray.showMessage("缘缘提醒", msg, QSystemTrayIcon.MessageIcon.Information, 6000)
@@ -591,6 +626,15 @@ def main(argv: list[str]) -> int:
                 bubble.place_above(window.frameGeometry())
                 bubble.show_text(f"（{entry['label']}～）", 6)
             print(f"[作息] {entry.get('label', '') or '作息'} → {entry['state']}", flush=True)
+        # P0-4 深夜懂事：0~5 点每晚一次，不弹系统通知（免打扰时段只出气泡）
+        if now_dt.hour < 5 and not silent["on"] and not fullscreen["on"]:
+            night_key = f"late_night_{now_dt.date().isoformat()}"
+            if not save.get(night_key):
+                save.set(night_key, True)
+                sm.on_sense("late_night")
+                bubble.place_above(window.frameGeometry())
+                bubble.show_text(f"（都{now_dt.hour}点啦…还不睡吗？我在这守着，你去休息吧）", 12)
+                print("[深夜] 晚安问候已送出", flush=True)
 
     life_timer = QTimer()
     life_timer.timeout.connect(lambda: (evolution.tick((1 / 60) * args.fast_life),
@@ -602,6 +646,10 @@ def main(argv: list[str]) -> int:
     sense_timer.start(250)
 
     def stop_everything() -> None:
+        try:
+            save.set("pet_x", window.x())  # P0-1：记住站位
+        except Exception:
+            pass
         save.close()
         if hooks is not None:
             for k in ("keyboard", "mouse", "hotkeys"):

@@ -92,6 +92,8 @@ MANIFEST = {
          "trigger": {"type": "sense", "event": "user_return"}, "duration_s": [2.5, 3.5]},
         {"id": "nudge_rest", "from": ["idle", "walk", "hungry"], "to": "excited",
          "trigger": {"type": "sense", "event": "work_marathon"}, "duration_s": [3, 4.5]},
+        {"id": "late_night", "from": ["idle", "walk", "hungry"], "to": "dozy",
+         "trigger": {"type": "sense", "event": "late_night"}},
     ],
     "sense": {
         "reminders": {

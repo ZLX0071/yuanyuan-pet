@@ -93,3 +93,9 @@ def mark_reminded(save, note_id: str) -> None:
         if n.get("id") == note_id:
             n["reminded"] = True
     save.set("notes", notes)
+
+
+def delete_note(save, note_id: str) -> None:
+    """完成/删除：直接从列表移除。"""
+    notes = [n for n in (save.get("notes", []) or []) if n.get("id") != note_id]
+    save.set("notes", notes)

@@ -167,6 +167,12 @@ class PetWindow(QWidget):
         else:
             act.setEnabled(False)
         menu.addAction(act)
+        notes_act = QAction("我的记事", menu)
+        if "notes" in self.actions:
+            notes_act.triggered.connect(lambda _=False: self.actions["notes"]())
+        else:
+            notes_act.setEnabled(False)
+        menu.addAction(notes_act)
         silent_label = "取消静默" if self.silent.get("on") else "静默模式"
         act = QAction(silent_label, menu)
         if "toggle_silent" in self.actions:

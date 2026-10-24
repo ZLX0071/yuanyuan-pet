@@ -8,9 +8,11 @@ from __future__ import annotations
 import json
 import re
 
+from PyQt6.QtCore import QTime
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFormLayout,
                              QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                             QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout)
+                             QSpinBox, QTableWidget, QTableWidgetItem, QTimeEdit,
+                             QVBoxLayout)
 
 
 class SettingsDialog(QDialog):
@@ -69,6 +71,33 @@ class SettingsDialog(QDialog):
             form_rem.addRow(label, row)
             self.rem_widgets[kind] = (cb, sp)
         root.addWidget(gb_rem)
+
+        # ---- 免打扰时段（P0-3）----
+        gb_dnd = QGroupBox("免打扰时段（期间提醒静默，过后补上）")
+        row_dnd = QHBoxLayout(gb_dnd)
+        self.cb_dnd = QCheckBox("启用")
+        dnd = self.ctx["get_dnd"]()
+        self.cb_dnd.setChecked(bool(dnd.get("enabled", False)))
+        self.te_start = QTimeEdit()
+        self.te_end = QTimeEdit()
+        self.te_start.setDisplayFormat("HH:mm")
+        self.te_end.setDisplayFormat("HH:mm")
+
+        def _qtime(text: str, fallback: str) -> QTime:
+            try:
+                return QTime.fromString(str(text or fallback), "HH:mm")
+            except Exception:
+                return QTime.fromString(fallback, "HH:mm")
+
+        self.te_start.setTime(_qtime(dnd.get("start"), "23:00"))
+        self.te_end.setTime(_qtime(dnd.get("end"), "08:00"))
+        row_dnd.addWidget(self.cb_dnd)
+        row_dnd.addWidget(QLabel("从"))
+        row_dnd.addWidget(self.te_start)
+        row_dnd.addWidget(QLabel("到"))
+        row_dnd.addWidget(self.te_end)
+        row_dnd.addStretch(1)
+        root.addWidget(gb_dnd)
 
         # ---- 作息还原（X1）----
         gb_sched = QGroupBox("作息还原（缘缘按你的节奏自主生活）")
@@ -190,6 +219,12 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "连接失败", str(e))
 
     def _save(self) -> None:
+        # 免打扰（P0-3）
+        self.ctx["save_dnd"]({
+            "enabled": self.cb_dnd.isChecked(),
+            "start": self.te_start.time().toString("HH:mm"),
+            "end": self.te_end.time().toString("HH:mm"),
+        })
         # 作息（X1）
         sched = self._collect_sched()
         if sched is None:
