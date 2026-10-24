@@ -31,6 +31,7 @@ class StateMachine(QObject):
         )
         self._locked = False  # 拖拽中：只允许 drag_end
         self._last_auto = 0.0
+        self.focus = None     # FocusTimer（M4.5 专注陪伴）：非 None 且 on 时不做自动决策
         self._decision_timer = QTimer(self)
         self._decision_timer.timeout.connect(self._tick)
         self._decision_timer.start(100)  # 10Hz 决策
@@ -65,6 +66,8 @@ class StateMachine(QObject):
 
     def on_sense(self, name: str) -> None:
         """感知事件（聚合器产出，主线程调用）→ 匹配宠物包里的 sense 行为"""
+        if self.focus is not None and self.focus.on:
+            return  # 专注模式不打扰
         now = time.monotonic()
         if not self._dwell_ok(now):
             return
@@ -87,6 +90,8 @@ class StateMachine(QObject):
             self._behavior_until = None
             self._transition(self.pack.default_state)
             return
+        if self.focus is not None and self.focus.on:
+            return  # 专注模式：安静陪坐，不做自动决策（点击/拖拽等事件不受限）
         if not self._dwell_ok(now):
             return  # 最短停留期内不做自动决策
         for b in self.pack.behaviors:

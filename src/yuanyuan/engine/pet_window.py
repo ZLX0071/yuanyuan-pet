@@ -18,12 +18,13 @@ DRAG_THRESHOLD = 6  # px；超过视为拖拽而非点击
 
 class PetWindow(QWidget):
     def __init__(self, pack: PetPack, sm: StateMachine, actions: dict | None = None,
-                 silent: dict | None = None):
+                 silent: dict | None = None, focus=None):
         super().__init__()
         self.pack = pack
         self.sm = sm
-        self.actions = actions or {}  # {"feed": fn, "pet": fn, "toggle_silent": fn}
+        self.actions = actions or {}  # {"feed": fn, ..., "chat": fn, "toggle_silent": fn, "toggle_focus": fn}
         self.silent = silent or {}    # {"on": bool} 共享状态（M3 静默模式）
+        self.focus = focus            # FocusTimer（M4.5）， duck-type 读 .on
         self._drag_offset: QPoint | None = None
         self._press_pos: QPoint | None = None
         self._moved = False
@@ -149,6 +150,13 @@ class PetWindow(QWidget):
                 act.setEnabled(False)
             menu.addAction(act)
         menu.addSeparator()
+        focus_label = "结束专注" if (self.focus is not None and self.focus.on) else "开始专注 (25 分钟)"
+        act = QAction(focus_label, menu)
+        if "toggle_focus" in self.actions:
+            act.triggered.connect(lambda _=False: self.actions["toggle_focus"]())
+        else:
+            act.setEnabled(False)
+        menu.addAction(act)
         silent_label = "取消静默" if self.silent.get("on") else "静默模式"
         act = QAction(silent_label, menu)
         if "toggle_silent" in self.actions:

@@ -290,6 +290,12 @@
         "state": "bath",
         "duration_s": 5,
         "cooldown_min": 720
+      },
+      "focus_done": {
+        "mood": 12,
+        "intimacy": 2,
+        "state": "excited",
+        "duration_s": 3
       }
     },
     "growth": [

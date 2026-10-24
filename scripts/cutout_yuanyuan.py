@@ -106,7 +106,8 @@ MANIFEST = {
             "pet": {"mood": 6, "intimacy": 1, "state": "excited", "duration_s": 2},
             "play_ball": {"mood": 18, "hunger": -8, "intimacy": 1, "state": "play", "duration_s": 5},
             "shake": {"mood": 4, "intimacy": 1, "state": "shake", "duration_s": 3},
-            "bath": {"mood": 15, "intimacy": 1, "state": "bath", "duration_s": 5, "cooldown_min": 720}
+            "bath": {"mood": 15, "intimacy": 1, "state": "bath", "duration_s": 5, "cooldown_min": 720},
+            "focus_done": {"mood": 12, "intimacy": 2, "state": "excited", "duration_s": 3}
         },
         "growth": [
             {"stage": "幼年期", "min_intimacy": 0, "scale": 0.85},

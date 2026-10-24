@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import queue
+import random
+import re
 import sys
 import threading
 import time
@@ -14,6 +17,8 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+from yuanyuan.ai.notes import (NOTE_VIEW_RE, add_note, due_notes, extract_note,
+                               mark_reminded, pending_notes)
 from yuanyuan.ai.provider import AIError, Provider, load_ai_config
 from yuanyuan.content.models import PetPack
 from yuanyuan.content.pack_loader import PackError, load_pack
@@ -22,7 +27,9 @@ from yuanyuan.engine.bubble import Bubble, ChatInput
 from yuanyuan.engine.pet_window import PetWindow
 from yuanyuan.life.save import Save
 from yuanyuan.life.stats import Evolution
+from yuanyuan.sense.calendar import CalendarWatch
 from yuanyuan.sense.events import SenseAggregator
+from yuanyuan.sense.focus import FocusTimer
 from yuanyuan.sense.hooks import ForegroundPoller, start_hooks
 from yuanyuan.sense.reminders import ReminderScheduler
 
@@ -60,6 +67,9 @@ def _make_tray(app: QApplication, actions: dict, reminders: ReminderScheduler
     chat.triggered.connect(lambda: actions["chat"]())
     menu.addAction(chat)
     menu.addSeparator()
+    a_focus = QAction("开始专注 (25 分钟)", menu)
+    a_focus.triggered.connect(lambda: actions["toggle_focus"]())
+    menu.addAction(a_focus)
     a_silent = QAction("静默模式 (Ctrl+Alt+Y)", menu)
     a_silent.triggered.connect(lambda: actions["toggle_silent"]())
     menu.addAction(a_silent)
@@ -75,7 +85,7 @@ def _make_tray(app: QApplication, actions: dict, reminders: ReminderScheduler
     quit_act.triggered.connect(app.quit)
     tray.setContextMenu(menu)
     tray.show()
-    return tray, {"silent": a_silent}
+    return tray, {"silent": a_silent, "focus": a_focus}
 
 
 def main(argv: list[str]) -> int:
@@ -140,6 +150,9 @@ def main(argv: list[str]) -> int:
     tray_holder: dict = {}
     silent = {"on": False}
     fullscreen = {"on": False}
+    focus = FocusTimer()
+    sm.focus = focus  # 专注时引擎抑制自动行为（安静陪坐）
+    calendar_watch = CalendarWatch(PROJ_ROOT / "data")
 
     def apply_stage_scale() -> None:
         sm.pixmaps = build_scaled(pack.scale * evolution.stage_scale())
@@ -151,33 +164,50 @@ def main(argv: list[str]) -> int:
     chat_input = ChatInput()
     chat_q: queue.Queue = queue.Queue()
 
-    def build_messages(user_text: str) -> list[dict]:
+    def build_system() -> str:
         persona = (pack.personality or {}).get("prompt", "你是一只可爱的桌宠小狗。")
-        system = (f"{persona}\n当前状态：{evolution.stage}期，饱食 {evolution.hunger:.0f}，"
-                  f"心情 {evolution.mood:.0f}，亲密度 {evolution.intimacy:.0f}，"
-                  f"你们已经陪伴 {evolution.day_count()} 天，连续陪伴 {evolution.streak} 天。"
-                  "用一两句话回复，像狗狗一样说话，可以偶尔提到当前状态。")
+        return (f"{persona}\n当前状态：{evolution.stage}期，饱食 {evolution.hunger:.0f}，"
+                f"心情 {evolution.mood:.0f}，亲密度 {evolution.intimacy:.0f}，"
+                f"你们已经陪伴 {evolution.day_count()} 天，连续陪伴 {evolution.streak} 天。"
+                "用一两句话回复，像狗狗一样说话，可以偶尔提到当前状态。")
+
+    def build_messages(user_text: str) -> list[dict]:
         history = save.get("chat_history", []) or []
-        return [{"role": "system", "content": system}] + history[-6:] + \
+        return [{"role": "system", "content": build_system()}] + history[-6:] + \
                [{"role": "user", "content": user_text}]
+
+    def _bump_usage(tokens: int) -> None:
+        usage_key = f"ai_usage_{time.strftime('%Y%m')}"
+        used = int(save.get(usage_key, 0) or 0)
+        save.set(usage_key, used + tokens)
+        print(f"[AI] tokens +{tokens}（本月 {used + tokens:,}）", flush=True)
+
+    def _within_budget() -> bool:
+        used = int(save.get(f"ai_usage_{time.strftime('%Y%m')}", 0) or 0)
+        return ai_cfg is None or used < int(ai_cfg["monthly_token_budget"])
 
     def _ai_chat(user_text: str) -> str:
         assert provider is not None and ai_cfg is not None
-        month = time.strftime("%Y%m")
-        usage_key = f"ai_usage_{month}"
-        used = int(save.get(usage_key, 0) or 0)
-        if used >= int(ai_cfg["monthly_token_budget"]):
+        if not _within_budget():
             return "（这个月的脑力额度用完啦，下个月再聊…）"
         reply, tokens = provider.chat(build_messages(user_text))
-        save.set(usage_key, used + tokens)
+        _bump_usage(tokens)
         history = save.get("chat_history", []) or []
         history += [{"role": "user", "content": user_text}, {"role": "assistant", "content": reply}]
         save.set("chat_history", history[-20:])  # 滚动保留最近 10 轮
-        print(f"[AI] tokens +{tokens}（本月 {used + tokens:,}）", flush=True)
         return reply
 
     def send_chat(text: str) -> None:
         sm.note_interaction()
+        if NOTE_VIEW_RE.search(text):  # 本地快路径：看记事不打 AI
+            notes = pending_notes(save)
+            if not notes:
+                bubble.show_text("（现在没有待办的记事哦）", 8)
+            else:
+                lines = [f"• {n['text']}" + (f"（{n['due']} 提醒）" if n.get("due") else "")
+                         for n in notes[:8]]
+                bubble.show_text("你的记事：\n" + "\n".join(lines), 20)
+            return
         if provider is None:
             bubble.show_text("（还没有配置 AI 服务：把 API 信息写进 data/config.json 就能聊啦）", 8)
             return
@@ -186,9 +216,42 @@ def main(argv: list[str]) -> int:
 
     def _chat_worker(text: str) -> None:
         try:
-            chat_q.put(_ai_chat(text))
+            reply = _ai_chat(text)
+            try:
+                note = extract_note(provider, text)  # 启发式闸门命中才多花一次小调用
+            except AIError:
+                note = None
+            if note:
+                add_note(save, note)
+                due_s = f"，{note['due']} 提醒你" if note.get("due") else ""
+                reply += f"\n（记下啦：{note['text']}{due_s}）"
+            chat_q.put(reply)
         except AIError as e:
             chat_q.put(f"（{e}）")
+
+    def maybe_proactive(ev: str) -> None:
+        """T4.5 主动搭话：特定感知事件低频触发，每日上限来自宠物包 personality.proactive"""
+        if provider is None or silent["on"] or fullscreen["on"] or focus.on:
+            return
+        max_n = int((pack.personality or {}).get("proactive", {}).get("max_per_day", 5))
+        key = f"proactive_{time.strftime('%Y%m%d')}"
+        count = int(save.get(key, 0) or 0)
+        if count >= max_n or random.random() > 0.4:  # 非加密用途：主动搭话的概率掷签
+            return
+        save.set(key, count + 1)
+        context = "主人刚回到电脑前" if ev == "user_return" else "主人已经连续工作一个小时了"
+
+        def worker() -> None:
+            try:
+                msgs = [{"role": "system",
+                         "content": build_system() + f"\n现在{context}。主动说一句话（15 字内），不要提问。"}]
+                reply, tokens = provider.chat(msgs)
+                _bump_usage(tokens)
+                chat_q.put(reply)
+            except AIError:
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def on_interact(iid: str) -> None:
         sm.note_interaction()  # 菜单交互重置闲置/睡觉计时
@@ -220,11 +283,26 @@ def main(argv: list[str]) -> int:
         chat_input.place_above(window.frameGeometry())
         chat_input.focus()
 
+    def toggle_focus() -> None:
+        if focus.on:
+            focus.cancel()
+            tray_refs["focus"].setText("开始专注 (25 分钟)")
+            bubble.show_text("（专注取消啦，随时再叫我陪你）", 6)
+            print("[专注] 已取消", flush=True)
+        else:
+            mins = int(focus.start(time.monotonic()) // 60)
+            sm.force(pack.default_state)
+            bubble.place_above(window.frameGeometry())
+            bubble.show_text(f"接下来 {mins} 分钟我安静陪你～", 8)
+            tray_refs["focus"].setText("结束专注")
+            print(f"[专注] 开始 {mins} 分钟（期间缘缘安静陪坐）", flush=True)
+
     actions["toggle_silent"] = toggle_silent
     actions["chat"] = open_chat
+    actions["toggle_focus"] = toggle_focus
     chat_input.send_requested.connect(send_chat)
 
-    window = PetWindow(pack, sm, actions=actions, silent=silent)
+    window = PetWindow(pack, sm, actions=actions, silent=silent, focus=focus)
     window.place_on(app.primaryScreen())
     window.show()
 
@@ -288,6 +366,8 @@ def main(argv: list[str]) -> int:
         for ev in aggregator.poll(now):
             print(f"[感知] {ev}", flush=True)
             sm.on_sense(ev)
+            if ev in ("user_return", "work_marathon"):
+                maybe_proactive(ev)
         for kind, message in reminders.due(now):
             if silent["on"] or fullscreen["on"]:
                 continue  # 延后：不 mark_fired，下个周期继续到期
@@ -295,6 +375,31 @@ def main(argv: list[str]) -> int:
             reminders.mark_fired(kind, now)
             sm.force(pack.startup_state or pack.default_state, 2.5)
             print(f"[提醒] {kind}: {message}", flush=True)
+        if focus.poll(now):  # 番茄钟完成（M4.5-F-D）
+            count_key = f"pomodoro_{time.strftime('%Y%m%d')}"
+            count = int(save.get(count_key, 0) or 0) + 1
+            save.set(count_key, count)
+            result = evolution.do("focus_done")
+            if result and result[0]:
+                sm.force(result[0], result[1])
+            tray.showMessage("专注完成！", f"第 {count} 个番茄钟达成，缘缘很开心！", QSystemTrayIcon.MessageIcon.Information, 6000)
+            print(f"[专注] 完成，今天第 {count} 个", flush=True)
+            refresh_tooltip()
+        for summary, start in calendar_watch.scan(datetime.datetime.now()):  # 日历（F-C）
+            msg = f"{summary}（{start:%H:%M} 开始）"
+            tray.showMessage("日程提醒", msg, QSystemTrayIcon.MessageIcon.Information, 6000)
+            bubble.place_above(window.frameGeometry())
+            bubble.show_text(f"（快到日程啦：{summary}！）", 10)
+            sm.force(pack.startup_state or pack.default_state, 2.5)
+            print(f"[日程] {msg}", flush=True)
+        for n in due_notes(save, datetime.datetime.now()):  # 记事到期（F-B）
+            mark_reminded(save, n["id"])
+            msg = f"别忘了：{n['text']}"
+            tray.showMessage("缘缘提醒", msg, QSystemTrayIcon.MessageIcon.Information, 6000)
+            bubble.place_above(window.frameGeometry())
+            bubble.show_text(f"（{msg}！）", 10)
+            sm.force(pack.startup_state or pack.default_state, 2.5)
+            print(f"[记事] {msg}", flush=True)
 
     life_timer = QTimer()
     life_timer.timeout.connect(lambda: (evolution.tick((1 / 60) * args.fast_life),
